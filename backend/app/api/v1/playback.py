@@ -54,3 +54,20 @@ async def get_track_info(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Could not get track info: {str(e)}"
         )
+
+
+@router.get("/related/{video_id}")
+async def get_related_tracks(
+    video_id: str,
+    limit: int = Query(default=20, ge=1, le=50),
+    youtube: YouTubeService = Depends(get_youtube_service),
+):
+    """Get related videos for autoplay functionality."""
+    try:
+        related = await youtube.get_related_videos(video_id, limit)
+        return {"results": [track.model_dump() for track in related]}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Could not get related tracks: {str(e)}"
+        )

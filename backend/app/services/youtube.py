@@ -80,6 +80,117 @@ class YouTubeService:
             'view_count': info.get('view_count'),
         }
 
+    async def get_related_videos(self, video_id: str, limit: int = 20) -> List[TrackSearchResult]:
+        """Get related videos with smart variety - focuses on genre/artist, not song title repeats."""
+        import random
+        
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        # Extract video info
+        opts = {
+            'extract_flat': 'in_playlist',
+        }
+        
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(
+            executor,
+            self._extract_info,
+            url,
+            opts
+        )
+        
+        title = info.get('title', '')
+        artist = info.get('uploader', '') or info.get('channel', '')
+        
+        # Clean up artist name (remove "- Topic", "VEVO", etc.)
+        artist_clean = artist.replace(' - Topic', '').replace('VEVO', '').strip()
+        
+        # Build variety-focused search queries
+        # The key is to NOT search for the exact song title repeatedly
+        variety_queries = []
+        
+        # 1. Artist's other songs (high priority)
+        if artist_clean:
+            variety_queries.append(f"{artist_clean} songs")
+            variety_queries.append(f"{artist_clean} playlist")
+            variety_queries.append(f"best of {artist_clean}")
+        
+        # 2. Similar artists/genre (extract genre hints from title)
+        genre_hints = []
+        genre_keywords = ['love', 'ballad', 'rock', 'pop', 'acoustic', 'chill', 'sad', 
+                         'happy', 'dance', 'romantic', 'opm', 'indie', 'jazz', 'rnb',
+                         'hiphop', 'rap', 'country', 'folk', 'edm', 'kpop', 'jpop']
+        
+        title_lower = title.lower()
+        for keyword in genre_keywords:
+            if keyword in title_lower:
+                genre_hints.append(keyword)
+        
+        # Add generic genre queries
+        if 'love' in title_lower or 'heart' in title_lower:
+            variety_queries.append("love songs playlist")
+            variety_queries.append("romantic songs")
+        
+        if genre_hints:
+            variety_queries.append(f"{genre_hints[0]} music playlist")
+        
+        # 3. "Similar to" searches
+        variety_queries.append(f"songs like {artist_clean}")
+        variety_queries.append(f"{artist_clean} similar artists")
+        
+        # 4. Mix/radio style
+        variety_queries.append(f"{artist_clean} mix")
+        variety_queries.append("trending songs")
+        
+        # Fetch tracks from multiple queries for variety
+        all_tracks = []
+        seen_ids = {video_id}  # Don't include original
+        seen_titles = set()  # Avoid same song different versions
+        
+        # Extract core title words to avoid repeats (e.g., "close to you" variants)
+        title_words = set(title.lower().split()[:4])  # First 4 words of title
+        
+        # Shuffle queries for randomness
+        random.shuffle(variety_queries)
+        
+        for query in variety_queries[:5]:  # Use top 5 random queries
+            try:
+                results = await self.search(query, limit=8)
+                for track in results:
+                    if track.id in seen_ids:
+                        continue
+                    
+                    # Check if this is basically the same song (cover/remix)
+                    track_title_lower = track.title.lower()
+                    track_words = set(track_title_lower.split()[:4])
+                    
+                    # If too many words overlap with original title, skip (likely same song)
+                    overlap = len(title_words & track_words)
+                    if overlap >= 3:  # 3+ matching words = probably same song
+                        continue
+                    
+                    # Also check for exact title matches (normalized)
+                    if any(existing.lower() == track_title_lower for existing in seen_titles):
+                        continue
+                    
+                    seen_ids.add(track.id)
+                    seen_titles.add(track.title)
+                    all_tracks.append(track)
+                    
+            except Exception as e:
+                print(f"DEBUG: Query '{query}' failed: {e}")
+                continue
+        
+        # Shuffle results for variety
+        random.shuffle(all_tracks)
+        
+        # Limit results
+        result = all_tracks[:limit]
+        
+        print(f"DEBUG: Generated {len(result)} varied tracks for '{title}' by '{artist_clean}'")
+        
+        return result
+
     async def get_audio_stream_url(self, video_id: str) -> StreamInfo:
         """Get the best audio stream URL for a video."""
         url = f"https://www.youtube.com/watch?v={video_id}"

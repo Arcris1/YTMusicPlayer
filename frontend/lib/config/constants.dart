@@ -20,4 +20,7 @@ class ApiConstants {
   
   // Playlist endpoints
   static const String playlists = '$apiV1/playlists';
+  
+  // Related/Autoplay endpoints
+  static const String relatedTracks = '$apiV1/playback/related';
 }

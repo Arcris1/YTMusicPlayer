@@ -28,6 +28,8 @@ class MediaPlayerState {
     this.originalQueue = const [],
     this.currentIndex = -1,
     this.isShuffle = false,
+    this.isAutoplayEnabled = true,
+    this.isFetchingRelated = false,
     this.videoWidth = 0,
     this.videoHeight = 0,
     this.volume = 100.0,
@@ -38,6 +40,8 @@ class MediaPlayerState {
   final List<Track> originalQueue; // Backup for un-shuffling
   final int currentIndex;
   final bool isShuffle;
+  final bool isAutoplayEnabled;
+  final bool isFetchingRelated;
   final int videoWidth;
   final int videoHeight;
   final double volume;
@@ -55,6 +59,8 @@ class MediaPlayerState {
     List<Track>? originalQueue,
     int? currentIndex,
     bool? isShuffle,
+    bool? isAutoplayEnabled,
+    bool? isFetchingRelated,
     int? videoWidth,
     int? videoHeight,
     double? volume,
@@ -74,6 +80,8 @@ class MediaPlayerState {
       originalQueue: originalQueue ?? this.originalQueue,
       currentIndex: currentIndex ?? this.currentIndex,
       isShuffle: isShuffle ?? this.isShuffle,
+      isAutoplayEnabled: isAutoplayEnabled ?? this.isAutoplayEnabled,
+      isFetchingRelated: isFetchingRelated ?? this.isFetchingRelated,
       videoWidth: videoWidth ?? this.videoWidth,
       videoHeight: videoHeight ?? this.videoHeight,
       volume: volume ?? this.volume,
@@ -134,6 +142,9 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
         // Auto-play next track
         if (state.hasNext) {
           skipToNext();
+        } else if (state.isAutoplayEnabled && state.currentTrack != null) {
+          // Queue ended - fetch related videos for continuous playback
+          _fetchAndPlayRelated(state.currentTrack!.id);
         } else {
           state = state.copyWith(isPlaying: false);
         }
@@ -372,6 +383,42 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
   /// Toggle video mode
   void setVideoMode(bool videoMode) {
     state = state.copyWith(isVideoMode: videoMode);
+  }
+
+  /// Toggle autoplay
+  void toggleAutoplay() {
+    state = state.copyWith(isAutoplayEnabled: !state.isAutoplayEnabled);
+  }
+
+  /// Fetch and play related tracks when queue ends
+  Future<void> _fetchAndPlayRelated(String videoId) async {
+    if (state.isFetchingRelated) return;
+    
+    state = state.copyWith(isFetchingRelated: true);
+    print('MediaPlayer: Fetching related tracks for $videoId');
+    
+    try {
+      final response = await _dio.get('${ApiConstants.relatedTracks}/$videoId');
+      final results = (response.data['results'] as List)
+          .map((json) => Track.fromJson(json))
+          .toList();
+      
+      if (results.isNotEmpty) {
+        // Add related tracks to queue and play first one
+        state = state.copyWith(
+          queue: results,
+          originalQueue: results,
+          currentIndex: 0,
+          isFetchingRelated: false,
+        );
+        await playTrack(results[0], videoMode: state.isVideoMode, quality: state.quality);
+      } else {
+        state = state.copyWith(isFetchingRelated: false, isPlaying: false);
+      }
+    } catch (e) {
+      print('MediaPlayer: Failed to fetch related tracks: $e');
+      state = state.copyWith(isFetchingRelated: false, isPlaying: false);
+    }
   }
 
   @override

@@ -216,9 +216,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                 track: track,
                                 isPlaying: isPlaying,
                                 onTap: () {
-                                  // Play using global player
+                                  // Queue all search results for autoplay
                                   ref.read(mediaPlayerControllerProvider.notifier)
-                                      .playTrack(track, videoMode: true);
+                                      .playPlaylist(searchState.results, initialIndex: index);
                                 },
                                 onMorePressed: () {
                                   _showTrackOptions(context, track);
