@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../config/theme.dart';
-import '../../../../core/api/api_client.dart';
+import '../../../../core/providers/service_providers.dart';
 import '../../../../core/providers/media_player_provider.dart';
 import '../../../../shared/models/playlist.dart';
-import '../../../../shared/models/track.dart';
 import '../../providers/playlist_provider.dart';
 
 class PlaylistDetailScreen extends ConsumerStatefulWidget {
@@ -34,8 +33,8 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
 
   Future<void> _loadDetails() async {
     try {
-      final client = ref.read(apiClientProvider);
-      final playlist = await client.getPlaylistDetails(widget.playlistId);
+      final dbService = ref.read(databaseServiceProvider);
+      final playlist = await dbService.getPlaylistDetails(widget.playlistId);
       if (mounted) {
         setState(() {
           _playlist = playlist;
@@ -127,9 +126,9 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                       ),
                     );
                   }
-                  
+
                   if (index >= tracks.length) return null;
-                  
+
                   final track = tracks[index];
                   final isLiked = playlistState.likedTrackIds.contains(track.id);
 
@@ -145,16 +144,14 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                         color: Colors.grey.shade900,
                         borderRadius: BorderRadius.circular(4),
                       ),
-                      child: track.thumbnailUrl != null
-                          ? Image.network(
-                              track.thumbnailUrl!,
+                      child: Image.network(
+                              track.thumbnailUrl,
                               fit: BoxFit.cover,
                               errorBuilder: (_, __, ___) => const Icon(
                                 Icons.music_note,
                                 color: Colors.white54,
                               ),
-                            )
-                          : const Icon(Icons.music_note, color: Colors.white54),
+                            ),
                     ),
                     title: Text(
                       track.title,
@@ -185,18 +182,7 @@ class _PlaylistDetailScreenState extends ConsumerState<PlaylistDetailScreen> {
                             size: 20,
                           ),
                           onPressed: () {
-                             final likedPlaylist = playlistState.playlists
-                                 .where((p) => p.name == 'Liked Songs')
-                                 .firstOrNull;
-                             
-                             if (likedPlaylist != null) {
-                               ref.read(playlistProvider.notifier)
-                                   .toggleLike(likedPlaylist.id, track.id);
-                             } else {
-                               ScaffoldMessenger.of(context).showSnackBar(
-                                 const SnackBar(content: Text('Liked Songs playlist not found')),
-                               );
-                             }
+                            ref.read(playlistProvider.notifier).toggleLike(track);
                           },
                         ),
                         // More Options

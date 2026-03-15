@@ -24,22 +24,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handleLogin() async {
-    if (_formKey.currentState!.validate()) {
-      final success = await ref.read(authProvider.notifier).login(
-            _emailController.text.trim(),
-            _passwordController.text.trim(),
-          );
+    if (!_formKey.currentState!.validate()) return;
 
-      if (!success && mounted) {
-        final error = ref.read(authProvider).error;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error ?? 'Login failed'),
-            backgroundColor: Colors.red,
-          ),
+    await ref.read(authProvider.notifier).login(
+          _emailController.text.trim(),
+          _passwordController.text,
         );
-      }
-    }
   }
 
   @override
@@ -51,89 +41,110 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(32),
             child: Form(
               key: _formKey,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(
-                    Icons.music_note_rounded,
-                    size: 80,
-                    color: AppTheme.primaryGreen,
+                  // Logo
+                  Image.asset(
+                    'assets/images/logo.png',
+                    width: 80,
+                    height: 80,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.music_note,
+                      size: 80,
+                      color: AppTheme.primaryGreen,
+                    ),
                   ),
-                  const SizedBox(height: 32),
+                  const SizedBox(height: 16),
                   const Text(
-                    'Welcome Back',
-                    textAlign: TextAlign.center,
+                    'SpoTube',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: AppTheme.textPrimary,
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Sign in to continue',
+                    style: TextStyle(color: AppTheme.textSecondary),
+                  ),
                   const SizedBox(height: 48),
+
+                  // Error message
+                  if (authState.error != null)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade900.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        authState.error!,
+                        style: TextStyle(color: Colors.red.shade300),
+                      ),
+                    ),
+
+                  // Email
                   TextFormField(
                     controller: _emailController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: 'Email',
-                      hintStyle: TextStyle(color: Colors.grey.shade600),
-                      filled: true,
-                      fillColor: Colors.grey.shade900,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                      prefixIcon: Icon(Icons.email, color: Colors.grey.shade600),
-                    ),
+                    keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(color: AppTheme.textPrimary),
+                    decoration: _inputDecoration('Email'),
                     validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter your email';
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Email is required';
                       }
                       return null;
                     },
                   ),
                   const SizedBox(height: 16),
+
+                  // Password
                   TextFormField(
                     controller: _passwordController,
                     obscureText: true,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: 'Password',
-                      hintStyle: TextStyle(color: Colors.grey.shade600),
-                      filled: true,
-                      fillColor: Colors.grey.shade900,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide.none,
-                      ),
-                      prefixIcon: Icon(Icons.lock, color: Colors.grey.shade600),
-                    ),
+                    style: const TextStyle(color: AppTheme.textPrimary),
+                    decoration: _inputDecoration('Password'),
                     validator: (value) {
                       if (value == null || value.isEmpty) {
-                        return 'Please enter your password';
+                        return 'Password is required';
                       }
                       return null;
                     },
+                    onFieldSubmitted: (_) => _handleLogin(),
                   ),
                   const SizedBox(height: 24),
+
+                  // Login button
                   SizedBox(
-                    height: 50,
+                    width: double.infinity,
+                    height: 48,
                     child: ElevatedButton(
                       onPressed: authState.isLoading ? null : _handleLogin,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppTheme.primaryGreen,
                         foregroundColor: Colors.black,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(25),
+                          borderRadius: BorderRadius.circular(24),
                         ),
                       ),
                       child: authState.isLoading
-                          ? const CircularProgressIndicator(color: Colors.black)
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.black,
+                              ),
+                            )
                           : const Text(
-                              'LOG IN',
+                              'Log In',
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -142,36 +153,61 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const RegisterScreen(),
-                        ),
-                      );
-                    },
-                    child: RichText(
-                      text: const TextSpan(
-                        style: TextStyle(color: Colors.grey),
-                        children: [
-                          TextSpan(text: "Don't have an account? "),
-                          TextSpan(
-                            text: 'Sign Up',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
+
+                  // Register link
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        "Don't have an account? ",
+                        style: TextStyle(color: AppTheme.textSecondary),
                       ),
-                    ),
+                      GestureDetector(
+                        onTap: () {
+                          ref.read(authProvider.notifier).clearError();
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const RegisterScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text(
+                          'Sign Up',
+                          style: TextStyle(
+                            color: AppTheme.primaryGreen,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration(String label) {
+    return InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(color: AppTheme.textSecondary),
+      filled: true,
+      fillColor: AppTheme.cardDark,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: const BorderSide(color: AppTheme.primaryGreen),
       ),
     );
   }

@@ -1,9 +1,28 @@
+import 'dart:async';
+import 'package:audio_service/audio_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart' hide Track;
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:dio/dio.dart';
-import '../../config/constants.dart';
+import '../services/audio_handler.dart';
+import '../services/youtube_service.dart';
 import '../../shared/models/track.dart';
+import 'service_providers.dart';
+
+/// Info about the playlist/source the current queue came from.
+class PlaylistSource {
+  final String id;
+  final String title;
+  final String? thumbnail;
+  final String? channel;
+
+  const PlaylistSource({
+    required this.id,
+    required this.title,
+    this.thumbnail,
+    this.channel,
+  });
+}
 
 /// Global media player state
 class MediaPlayerState {
@@ -33,11 +52,12 @@ class MediaPlayerState {
     this.videoWidth = 0,
     this.videoHeight = 0,
     this.volume = 100.0,
+    this.playlistSource,
   });
 
   final String quality;
   final List<Track> queue;
-  final List<Track> originalQueue; // Backup for un-shuffling
+  final List<Track> originalQueue;
   final int currentIndex;
   final bool isShuffle;
   final bool isAutoplayEnabled;
@@ -45,6 +65,7 @@ class MediaPlayerState {
   final int videoWidth;
   final int videoHeight;
   final double volume;
+  final PlaylistSource? playlistSource;
 
   MediaPlayerState copyWith({
     Track? currentTrack,
@@ -64,8 +85,10 @@ class MediaPlayerState {
     int? videoWidth,
     int? videoHeight,
     double? volume,
+    PlaylistSource? playlistSource,
     bool clearError = false,
     bool clearTrack = false,
+    bool clearPlaylistSource = false,
   }) {
     return MediaPlayerState(
       currentTrack: clearTrack ? null : (currentTrack ?? this.currentTrack),
@@ -85,14 +108,15 @@ class MediaPlayerState {
       videoWidth: videoWidth ?? this.videoWidth,
       videoHeight: videoHeight ?? this.videoHeight,
       volume: volume ?? this.volume,
+      playlistSource: clearPlaylistSource ? null : (playlistSource ?? this.playlistSource),
     );
   }
 
   bool get hasTrack => currentTrack != null;
-  double get progress => duration.inMilliseconds > 0 
-      ? position.inMilliseconds / duration.inMilliseconds 
+  double get progress => duration.inMilliseconds > 0
+      ? position.inMilliseconds / duration.inMilliseconds
       : 0.0;
-      
+
   bool get hasNext => queue.isNotEmpty && currentIndex < queue.length - 1;
   bool get hasPrevious => queue.isNotEmpty && currentIndex > 0;
 }
@@ -100,21 +124,33 @@ class MediaPlayerState {
 /// Global media player controller using MediaKit
 class MediaPlayerController extends StateNotifier<MediaPlayerState> {
   final Player _player;
-  final Dio _dio;
-  
-  MediaPlayerController(this._player, this._dio) : super(const MediaPlayerState()) {
+  final YouTubeService _youtubeService;
+  final AppAudioHandler _audioHandler;
+  StreamSubscription<dynamic>? _customEventSub;
+
+  /// Incremented on every playTrack call so stale requests are discarded.
+  int _playGeneration = 0;
+
+  MediaPlayerController(this._player, this._youtubeService, this._audioHandler)
+      : super(const MediaPlayerState()) {
     _setupListeners();
+    _setupAudioServiceListeners();
   }
 
   void _setupListeners() {
     // Listen to playing state
     _player.stream.playing.listen((playing) {
       state = state.copyWith(isPlaying: playing);
+      _syncAudioServiceState();
     });
 
     // Listen to position
     _player.stream.position.listen((position) {
       state = state.copyWith(position: position);
+      // Throttle position updates to notification (every ~1 second)
+      if (position.inMilliseconds % 1000 < 200) {
+        _syncAudioServiceState();
+      }
     });
 
     // Listen to duration
@@ -126,6 +162,7 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     _player.stream.buffering.listen((buffering) {
       if (state.isLoading && !buffering) {
         state = state.copyWith(isLoading: false);
+        _syncAudioServiceState();
       }
     });
 
@@ -147,20 +184,19 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
           _fetchAndPlayRelated(state.currentTrack!.id);
         } else {
           state = state.copyWith(isPlaying: false);
+          _syncAudioServiceState();
         }
       }
     });
 
     // Listen to video dimensions
     _player.stream.width.listen((width) {
-      print('MediaPlayer: Width Changed: $width');
       if (width != null && width > 0) {
         state = state.copyWith(videoWidth: width);
       }
     });
-    
+
     _player.stream.height.listen((height) {
-      print('MediaPlayer: Height Changed: $height');
       if (height != null && height > 0) {
         state = state.copyWith(videoHeight: height);
       }
@@ -172,28 +208,79 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     });
   }
 
-  /// Play a track (fetches stream URL from backend)
-  Future<void> playTrack(Track track, {bool videoMode = true, String quality = 'best'}) async {
-    print('MediaPlayer: Playing track ${track.title} (Video: $videoMode)');
+  /// Listen for skip commands from the notification / lock screen controls.
+  void _setupAudioServiceListeners() {
+    _customEventSub = _audioHandler.customEvent.listen((event) {
+      if (event == 'skipToNext') {
+        skipToNext();
+      } else if (event == 'skipToPrevious') {
+        skipToPrevious();
+      }
+    });
+  }
+
+  /// Push current playback state to the audio service notification.
+  void _syncAudioServiceState() {
+    _audioHandler.updatePlaybackState(
+      playing: state.isPlaying,
+      position: state.position,
+      processingState: state.isLoading
+          ? AudioProcessingState.loading
+          : AudioProcessingState.ready,
+    );
+  }
+
+  /// Push the current track's metadata to the audio service notification.
+  void _pushMediaItem(Track track) {
+    _audioHandler.updateMediaItem(MediaItem(
+      id: track.id,
+      title: track.title,
+      artist: track.artist ?? 'Unknown artist',
+      artUri: Uri.parse(track.thumbnailUrl),
+      duration: track.duration != null
+          ? Duration(seconds: track.duration!)
+          : null,
+    ));
+  }
+
+  /// Play a track (fetches stream URL from YouTubeService).
+  /// [videoMode] defaults to the current state's isVideoMode if not specified.
+  ///
+  /// Uses a generation counter so that if the user taps a new track while a
+  /// previous one is still loading, the stale request is discarded.
+  Future<void> playTrack(Track track, {bool? videoMode, String? quality}) async {
+    final effectiveVideoMode = videoMode ?? state.isVideoMode;
+    final effectiveQuality = quality ?? state.quality;
+
+    // Cancel any in-flight request by bumping the generation
+    final thisGeneration = ++_playGeneration;
+
     state = state.copyWith(
       currentTrack: track,
       isLoading: true,
-      isVideoMode: videoMode,
-      quality: quality,
+      isVideoMode: effectiveVideoMode,
+      quality: effectiveQuality,
       clearError: true,
-      // Don't reset dimensions to avoid desync if resolutions match
+    );
+
+    // Push metadata to notification immediately
+    _pushMediaItem(track);
+    _audioHandler.updatePlaybackState(
+      playing: false,
+      position: Duration.zero,
+      processingState: AudioProcessingState.loading,
     );
 
     try {
-      // Fetch stream URL from backend
-      final endpoint = videoMode ? ApiConstants.videoStream : ApiConstants.audioStream;
-      final response = await _dio.get(
-        '$endpoint/${track.id}',
-        queryParameters: {'quality': quality},
-      );
+      final streamResult = await (effectiveVideoMode
+              ? _youtubeService.getVideoStreamUrl(track.id, quality: effectiveQuality)
+              : _youtubeService.getAudioStreamUrl(track.id))
+          .timeout(const Duration(seconds: 15));
 
-      final streamUrl = response.data['url'] as String?;
-      if (streamUrl == null || streamUrl.isEmpty) {
+      // Discard if user already started a newer playTrack call
+      if (_playGeneration != thisGeneration) return;
+
+      if (streamResult.url.isEmpty) {
         state = state.copyWith(
           error: 'Could not get stream URL',
           isLoading: false,
@@ -201,41 +288,44 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
         return;
       }
 
-      // Extract headers
-      Map<String, String> headers = {};
-      if (response.data['headers'] != null) {
-        final headersMap = response.data['headers'] as Map;
-        headersMap.forEach((key, value) {
-          headers[key.toString()] = value.toString();
-        });
-      }
-
-      // Open and play
       await _player.open(
-        Media(streamUrl, httpHeaders: headers),
+        Media(streamResult.url),
         play: true,
       );
+    } on TimeoutException {
+      if (_playGeneration != thisGeneration) return;
+      state = state.copyWith(
+        error: 'Loading timed out — tap to retry',
+        isLoading: false,
+      );
+      _autoAdvanceOnError();
     } catch (e) {
+      if (_playGeneration != thisGeneration) return;
       state = state.copyWith(
         error: 'Failed to load: ${e.toString()}',
         isLoading: false,
       );
+      _autoAdvanceOnError();
+    }
+  }
+
+  /// Auto-advance to the next track after an error, with a short delay.
+  void _autoAdvanceOnError() {
+    if (state.hasNext) {
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) skipToNext();
+      });
     }
   }
 
   /// Play a list of tracks (Queue)
-  Future<void> playPlaylist(List<Track> tracks, {int initialIndex = 0}) async {
-    // If shuffle is on, we should shuffle immediately? 
-    // For now, let's respect current shuffle state or default to off?
-    // Let's reset shuffle when playing a NEW playlist to be safe, or keep user preference.
-    // Better: keep user preference. If shuffle IS on, shuffle the new list.
-    
+  Future<void> playPlaylist(List<Track> tracks, {int initialIndex = 0, PlaylistSource? source}) async {
+    debugPrint('[playPlaylist] source=${source?.title}, tracks=${tracks.length}');
     List<Track> newQueue = List.from(tracks);
     List<Track> newOriginalQueue = List.from(tracks);
     int newIndex = initialIndex;
 
     if (state.isShuffle) {
-      // Shuffle logic: Keep started track first, shuffle rest
       if (newQueue.isNotEmpty) {
         final firstTrack = newQueue[initialIndex];
         newQueue.removeAt(initialIndex);
@@ -249,10 +339,12 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
       queue: newQueue,
       originalQueue: newOriginalQueue,
       currentIndex: newIndex,
+      playlistSource: source,
+      clearPlaylistSource: source == null,
     );
-    
+
     if (newQueue.isNotEmpty) {
-      await playTrack(newQueue[newIndex], videoMode: state.isVideoMode, quality: state.quality);
+      await playTrack(newQueue[newIndex]);
     }
   }
 
@@ -261,7 +353,7 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     if (state.hasNext) {
       final nextIndex = state.currentIndex + 1;
       state = state.copyWith(currentIndex: nextIndex);
-      await playTrack(state.queue[nextIndex], videoMode: state.isVideoMode, quality: state.quality);
+      await playTrack(state.queue[nextIndex]);
     }
   }
 
@@ -276,7 +368,7 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     if (state.hasPrevious) {
       final prevIndex = state.currentIndex - 1;
       state = state.copyWith(currentIndex: prevIndex);
-      await playTrack(state.queue[prevIndex], videoMode: state.isVideoMode, quality: state.quality);
+      await playTrack(state.queue[prevIndex]);
     } else {
       seek(Duration.zero);
     }
@@ -285,33 +377,29 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
   /// Toggle Shuffle
   void toggleShuffle() {
     final newMode = !state.isShuffle;
-    
+
     if (newMode) {
-      // Turn Shuffle ON
       if (state.queue.isNotEmpty) {
         final currentTrack = state.queue[state.currentIndex];
-        final newQueue = List<Track>.from(state.originalQueue); // Copy original
-        
-        // Remove current, shuffle rest, prepend current
+        final newQueue = List<Track>.from(state.originalQueue);
+
         newQueue.removeWhere((t) => t.id == currentTrack.id);
         newQueue.shuffle();
         newQueue.insert(0, currentTrack);
-        
+
         state = state.copyWith(
           isShuffle: true,
           queue: newQueue,
-          currentIndex: 0, // Current track is now first
+          currentIndex: 0,
         );
       } else {
         state = state.copyWith(isShuffle: true);
       }
     } else {
-      // Turn Shuffle OFF
       if (state.currentTrack != null) {
-        // Restore original queue
         final currentId = state.currentTrack!.id;
         final originalIndex = state.originalQueue.indexWhere((t) => t.id == currentId);
-        
+
         state = state.copyWith(
           isShuffle: false,
           queue: state.originalQueue,
@@ -328,11 +416,9 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     if (state.currentTrack == null || state.quality == quality) return;
 
     final currentPosition = state.position;
-    final wasPlaying = state.isPlaying;
 
-    await playTrack(state.currentTrack!, videoMode: state.isVideoMode, quality: quality);
-    
-    // Seek back to position
+    await playTrack(state.currentTrack!, quality: quality);
+
     if (currentPosition > Duration.zero) {
       await _player.seek(currentPosition);
     }
@@ -366,18 +452,20 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     _player.seek(newPosition);
   }
 
-
-
   /// Set volume (0.0 to 100.0)
   void setVolume(double volume) {
     _player.setVolume(volume);
-    // State will be updated via stream listener
   }
 
   /// Stop playback
   void stop() {
     _player.stop();
-    state = state.copyWith(clearTrack: true, isPlaying: false);
+    state = state.copyWith(clearTrack: true, isPlaying: false, clearPlaylistSource: true);
+    _audioHandler.updatePlaybackState(
+      playing: false,
+      position: Duration.zero,
+      processingState: AudioProcessingState.idle,
+    );
   }
 
   /// Toggle video mode
@@ -390,39 +478,39 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     state = state.copyWith(isAutoplayEnabled: !state.isAutoplayEnabled);
   }
 
-  /// Fetch and play related tracks when queue ends
+  /// Fetch and play related tracks when queue ends (with timeout).
   Future<void> _fetchAndPlayRelated(String videoId) async {
     if (state.isFetchingRelated) return;
-    
+
     state = state.copyWith(isFetchingRelated: true);
-    print('MediaPlayer: Fetching related tracks for $videoId');
-    
+
     try {
-      final response = await _dio.get('${ApiConstants.relatedTracks}/$videoId');
-      final results = (response.data['results'] as List)
-          .map((json) => Track.fromJson(json))
-          .toList();
-      
+      final results = await _youtubeService
+          .getRelatedVideos(videoId)
+          .timeout(const Duration(seconds: 20));
+
+      if (!mounted) return;
+
       if (results.isNotEmpty) {
-        // Add related tracks to queue and play first one
         state = state.copyWith(
           queue: results,
           originalQueue: results,
           currentIndex: 0,
           isFetchingRelated: false,
         );
-        await playTrack(results[0], videoMode: state.isVideoMode, quality: state.quality);
+        await playTrack(results[0]);
       } else {
         state = state.copyWith(isFetchingRelated: false, isPlaying: false);
       }
     } catch (e) {
-      print('MediaPlayer: Failed to fetch related tracks: $e');
+      if (!mounted) return;
       state = state.copyWith(isFetchingRelated: false, isPlaying: false);
     }
   }
 
   @override
   void dispose() {
+    _customEventSub?.cancel();
     _player.dispose();
     super.dispose();
   }
@@ -430,24 +518,23 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
 
 /// Providers
 
-// Player instance (singleton)
+// Player instance — must be overridden in main.dart ProviderScope
 final playerProvider = Provider<Player>((ref) {
-  final player = Player();
-  ref.onDispose(() => player.dispose());
-  return player;
+  throw UnimplementedError('playerProvider must be overridden in ProviderScope');
 });
 
-// Dio instance for API calls
-final dioProvider = Provider<Dio>((ref) {
-  return Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
+// Audio handler — must be overridden in main.dart ProviderScope
+final audioHandlerProvider = Provider<AppAudioHandler>((ref) {
+  throw UnimplementedError('audioHandlerProvider must be overridden in ProviderScope');
 });
 
 // Media player controller
-final mediaPlayerControllerProvider = 
+final mediaPlayerControllerProvider =
     StateNotifierProvider<MediaPlayerController, MediaPlayerState>((ref) {
   final player = ref.watch(playerProvider);
-  final dio = ref.watch(dioProvider);
-  return MediaPlayerController(player, dio);
+  final youtubeService = ref.watch(youtubeServiceProvider);
+  final audioHandler = ref.watch(audioHandlerProvider);
+  return MediaPlayerController(player, youtubeService, audioHandler);
 });
 
 // Convenience providers for specific state
@@ -462,7 +549,7 @@ final currentTrackProvider = Provider<Track?>((ref) {
 final videoControllerProvider = Provider<VideoController>((ref) {
   final player = ref.watch(playerProvider);
   return VideoController(
-    player, 
+    player,
     configuration: const VideoControllerConfiguration(
       enableHardwareAcceleration: false,
     ),

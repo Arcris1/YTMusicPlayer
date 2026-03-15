@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../config/theme.dart';
+import '../../../../core/providers/service_providers.dart';
 import '../../providers/playlist_provider.dart';
-import '../../../auth/providers/auth_provider.dart';
-import '../../../../shared/models/playlist.dart';
 import 'playlist_detail_screen.dart';
 
 /// Library screen for playlists and liked songs
@@ -14,6 +13,20 @@ class LibraryScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final playlistState = ref.watch(playlistProvider);
 
+    final dbService = ref.read(databaseServiceProvider);
+    final likedId = dbService.likedSongsId;
+
+    // Find liked songs count from playlists
+    final likedSongsPlaylist = likedId.isNotEmpty
+        ? playlistState.playlists.where((p) => p.id == likedId).firstOrNull
+        : playlistState.playlists.where((p) => p.name == 'Liked Songs').firstOrNull;
+    final likedCount = likedSongsPlaylist?.trackCount ?? playlistState.likedTrackIds.length;
+
+    // Filter out liked songs from the user playlists list
+    final userPlaylists = playlistState.playlists
+        .where((p) => p.id != likedSongsPlaylist?.id)
+        .toList();
+
     return Scaffold(
       backgroundColor: AppTheme.spotifyBlack,
       appBar: AppBar(
@@ -23,12 +36,6 @@ class LibraryScreen extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.search),
             onPressed: () {},
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white54),
-            onPressed: () {
-              ref.read(authProvider.notifier).logout();
-            },
           ),
           IconButton(
             icon: const Icon(Icons.add),
@@ -44,15 +51,27 @@ class LibraryScreen extends ConsumerWidget {
           padding: const EdgeInsets.all(16),
           children: [
             // Liked Songs
-            const _LibraryItem(
+            _LibraryItem(
               icon: Icons.favorite,
               iconColor: AppTheme.primaryGreen,
               title: 'Liked Songs',
-              subtitle: 'Playlist • 0 songs', // TODO: Fetch real count
-              onTap: null, 
+              subtitle: 'Playlist \u2022 $likedCount songs',
+              onTap: () {
+                if (likedSongsPlaylist != null) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PlaylistDetailScreen(
+                        playlistId: likedSongsPlaylist.id,
+                        playlistName: 'Liked Songs',
+                      ),
+                    ),
+                  );
+                }
+              },
             ),
             const SizedBox(height: 16),
-            
+
             // Your Playlists header
             const Text(
               'Your Playlists',
@@ -65,16 +84,16 @@ class LibraryScreen extends ConsumerWidget {
             const SizedBox(height: 16),
 
             // Playlists List
-            if (playlistState.isLoading && playlistState.playlists.isEmpty)
+            if (playlistState.isLoading && userPlaylists.isEmpty)
               const Center(child: CircularProgressIndicator(color: AppTheme.primaryGreen))
-            else if (playlistState.playlists.isEmpty)
+            else if (userPlaylists.isEmpty)
               _buildEmptyState(context, ref)
             else
-              ...playlistState.playlists.map((playlist) => _LibraryItem(
+              ...userPlaylists.map((playlist) => _LibraryItem(
                 icon: Icons.music_note,
                 iconColor: Colors.grey,
                 title: playlist.name,
-                subtitle: 'Playlist • ${playlist.trackCount} songs',
+                subtitle: 'Playlist \u2022 ${playlist.trackCount} songs',
                 onTap: () {
                   Navigator.push(
                     context,
@@ -132,7 +151,7 @@ class LibraryScreen extends ConsumerWidget {
 
   void _showCreatePlaylistDialog(BuildContext context, WidgetRef ref) {
     final controller = TextEditingController();
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(

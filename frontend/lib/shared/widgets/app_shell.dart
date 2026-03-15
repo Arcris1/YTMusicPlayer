@@ -49,6 +49,9 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget build(BuildContext context) {
     final playerState = ref.watch(mediaPlayerControllerProvider);
     final hasTrack = playerState.hasTrack;
+    final hasSource = playerState.playlistSource != null;
+    final miniPlayerHeight = hasTrack ? (64.0 + (hasSource ? 28.0 : 0.0)) : 0.0;
+    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
 
     return Scaffold(
       backgroundColor: AppTheme.spotifyBlack,
@@ -56,16 +59,16 @@ class _AppShellState extends ConsumerState<AppShell> {
         children: [
           // Main content with padding for mini player and nav bar
           Positioned.fill(
-            bottom: hasTrack ? 64 + 60 : 60, // mini player + nav bar height
+            bottom: miniPlayerHeight + 60 + bottomInset,
             child: widget.child,
           ),
-          
+
           // Mini player (above nav bar)
           if (hasTrack)
             Positioned(
               left: 0,
               right: 0,
-              bottom: 60, // above nav bar
+              bottom: 60 + bottomInset,
               child: MiniPlayer(
                 onTap: _expandNowPlaying,
               ),
@@ -76,7 +79,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             left: 0,
             right: 0,
             bottom: 0,
-            child: _buildBottomNavBar(),
+            child: _buildBottomNavBar(bottomInset),
           ),
 
           // Expanded Now Playing Screen (slides up)
@@ -106,9 +109,9 @@ class _AppShellState extends ConsumerState<AppShell> {
     );
   }
 
-  Widget _buildBottomNavBar() {
+  Widget _buildBottomNavBar(double bottomInset) {
     return Container(
-      height: 60,
+      height: 60 + bottomInset,
       decoration: BoxDecoration(
         color: AppTheme.spotifyBlack,
         border: Border(
@@ -118,20 +121,23 @@ class _AppShellState extends ConsumerState<AppShell> {
           ),
         ),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _buildNavItem(0, Icons.home_rounded, Icons.home_outlined, 'Home'),
-          _buildNavItem(1, Icons.search_rounded, Icons.search_outlined, 'Search'),
-          _buildNavItem(2, Icons.library_music_rounded, Icons.library_music_outlined, 'Library'),
-        ],
+      child: Padding(
+        padding: EdgeInsets.only(bottom: bottomInset),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildNavItem(0, Icons.home_rounded, Icons.home_outlined, 'Home'),
+            _buildNavItem(1, Icons.search_rounded, Icons.search_outlined, 'Search'),
+            _buildNavItem(2, Icons.library_music_rounded, Icons.library_music_outlined, 'Library'),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildNavItem(int index, IconData activeIcon, IconData inactiveIcon, String label) {
     final isSelected = widget.currentIndex == index;
-    
+
     return Expanded(
       child: InkWell(
         onTap: () => widget.onNavigationChanged(index),

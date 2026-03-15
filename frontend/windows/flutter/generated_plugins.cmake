@@ -3,10 +3,10 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  audioplayers_windows
   flutter_secure_storage_windows
   media_kit_libs_windows_video
   media_kit_video
+  permission_handler_windows
   volume_controller
 )
 

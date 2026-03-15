@@ -1,5 +1,5 @@
 name: youtube_music_player
-description: "A Spotify-like music player powered by YouTube"
+description: "SpoTube - Music & video streaming powered by YouTube"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -11,36 +11,38 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
-  
+
   # State Management
   flutter_riverpod: ^2.5.1
   riverpod_annotation: ^2.3.5
-  
-  # HTTP & Networking
-  dio: ^5.4.2+1
-  
-  # Audio Playback (cross-platform: Windows, Android, iOS, macOS, Linux, Web)
-  audioplayers: ^6.1.0
-  
+
+  # HTTP Client (calls Python backend)
+  dio: ^5.4.0
+
+  # Secure Token Storage
+  flutter_secure_storage: ^9.2.2
+
+  # Audio Service (background playback + lock screen controls)
+  audio_service: ^0.18.15
+
   # Video Playback (MediaKit - uses mpv/libmpv for robust playback)
   media_kit: ^1.1.10
   media_kit_video: ^1.2.4
+  media_kit_libs_android_video: ^1.3.6
   media_kit_libs_windows_video: ^1.0.9
-  
-  # Local Storage
-  hive: ^2.2.3
-  hive_flutter: ^1.1.0
-  
+
   # UI Components
   cached_network_image: ^3.3.1
   shimmer: ^3.0.0
   google_fonts: ^6.2.1
-  
+
+  # Permissions
+  permission_handler: ^11.3.1
+
   # Utilities
   freezed_annotation: ^2.4.1
   json_annotation: ^4.8.1
   go_router: ^14.1.0
-  flutter_secure_storage: ^9.0.0
 
 dev_dependencies:
   flutter_test:
@@ -51,6 +53,25 @@ dev_dependencies:
   freezed: ^2.5.2
   json_serializable: ^6.7.1
   riverpod_generator: ^2.4.3
+  flutter_native_splash: ^2.4.3
+  flutter_launcher_icons: ^0.14.3
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/images/
+
+flutter_native_splash:
+  color: "#121212"
+  image: assets/images/logo.png
+  android: true
+  ios: true
+  web: false
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/images/logo.png"
+  adaptive_icon_background: "#121212"
+  adaptive_icon_foreground: "assets/images/logo.png"

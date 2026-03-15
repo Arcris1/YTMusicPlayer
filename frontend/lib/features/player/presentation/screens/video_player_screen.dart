@@ -3,9 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart' hide Track;
 import 'package:media_kit_video/media_kit_video.dart';
-import 'package:dio/dio.dart';
 import '../../../../config/theme.dart';
-import '../../../../config/constants.dart';
+import '../../../../core/services/youtube_service.dart';
 import '../../../../shared/models/track.dart';
 
 /// Video player screen for full video playback using MediaKit
@@ -25,10 +24,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   // MediaKit player and controller
   late final Player _player;
   late final VideoController _controller;
-  
+
   bool _isLoading = true;
   String? _error;
-  final Dio _dio = Dio(BaseOptions(baseUrl: ApiConstants.baseUrl));
+  final YouTubeService _youtubeService = YouTubeService();
 
   @override
   void initState() {
@@ -46,17 +45,12 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     });
 
     try {
-      debugPrint('Fetching video stream for: ${widget.track.id}');
-      final response = await _dio.get(
-        '${ApiConstants.videoStream}/${widget.track.id}',
-        queryParameters: {'quality': 'best'},
+      final streamResult = await _youtubeService.getVideoStreamUrl(
+        widget.track.id,
+        quality: 'best',
       );
 
-      debugPrint('Video API Response received');
-      final streamUrl = response.data['url'] as String?;
-      
-      if (streamUrl == null || streamUrl.isEmpty) {
-        debugPrint('ERROR: Video stream URL is empty or null');
+      if (streamResult.url.isEmpty) {
         setState(() {
           _error = 'Could not get video stream URL';
           _isLoading = false;
@@ -64,24 +58,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
         return;
       }
 
-      debugPrint('Video stream URL found, length: ${streamUrl.length}');
-
-      // Extract headers if available
-      Map<String, String> headers = {};
-      if (response.data['headers'] != null) {
-        final headersMap = response.data['headers'] as Map;
-        headersMap.forEach((key, value) {
-          headers[key.toString()] = value.toString();
-        });
-        debugPrint('Headers extracted: ${headers.keys.join(", ")}');
-      }
-
-      // Open media with MediaKit - supports headers natively
       await _player.open(
-        Media(streamUrl, httpHeaders: headers),
+        Media(streamResult.url),
         play: true,
       );
-      
+
       setState(() {
         _isLoading = false;
       });
@@ -194,7 +175,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
               title: const Text('Add to playlist'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Implement add to playlist
               },
             ),
             ListTile(
@@ -202,7 +182,6 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
               title: const Text('Share'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Implement share
               },
             ),
             ListTile(

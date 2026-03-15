@@ -1,15 +1,45 @@
 import yt_dlp
 from typing import Optional, List, Dict, Any
 import asyncio
+import time
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from app.config import get_settings
 from app.schemas.user import TrackSearchResult, StreamInfo, YouTubePlaylistResult
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Thread pool for yt-dlp operations (blocking I/O)
-executor = ThreadPoolExecutor(max_workers=4)
+executor = ThreadPoolExecutor(max_workers=8)
+
+# In-memory stream URL cache: { "audio:{video_id}": (StreamInfo, expiry_time), ... }
+_stream_cache: Dict[str, tuple] = {}
+_CACHE_TTL = 3600  # 1 hour — YouTube URLs expire in ~6h
+
+
+def _get_cached_stream(key: str) -> Optional[StreamInfo]:
+    """Return cached StreamInfo if still valid, else None."""
+    entry = _stream_cache.get(key)
+    if entry is None:
+        return None
+    info, expiry = entry
+    if time.monotonic() > expiry:
+        del _stream_cache[key]
+        return None
+    return info
+
+
+def _set_cached_stream(key: str, info: StreamInfo) -> None:
+    """Store a StreamInfo in the cache with TTL."""
+    _stream_cache[key] = (info, time.monotonic() + _CACHE_TTL)
+    # Evict old entries when cache grows too large
+    if len(_stream_cache) > 200:
+        now = time.monotonic()
+        expired = [k for k, (_, exp) in _stream_cache.items() if now > exp]
+        for k in expired:
+            del _stream_cache[k]
 
 
 class YouTubeService:
@@ -20,6 +50,10 @@ class YouTubeService:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
+            'socket_timeout': 10,
+            'retries': 3,
+            'extractor_retries': 2,
+            'geo_bypass': True,
         }
 
     def _extract_info(self, url: str, opts: dict) -> dict:
@@ -27,22 +61,23 @@ class YouTubeService:
         with yt_dlp.YoutubeDL({**self.base_opts, **opts}) as ydl:
             return ydl.extract_info(url, download=False)
 
+    async def _run_extraction(self, url: str, opts: dict, timeout: float = 15.0) -> dict:
+        """Run yt-dlp extraction in executor with timeout."""
+        loop = asyncio.get_event_loop()
+        return await asyncio.wait_for(
+            loop.run_in_executor(executor, self._extract_info, url, opts),
+            timeout=timeout,
+        )
+
     async def search(self, query: str, limit: int = 20) -> List[TrackSearchResult]:
         """Search YouTube for videos matching the query."""
         search_opts = {
             'extract_flat': True,
             'default_search': 'ytsearch',
         }
-        
+
         search_url = f"ytsearch{limit}:{query}"
-        
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            executor, 
-            self._extract_info, 
-            search_url, 
-            search_opts
-        )
+        result = await self._run_extraction(search_url, search_opts, timeout=15.0)
 
         tracks = []
         for entry in result.get('entries', []):
@@ -55,7 +90,7 @@ class YouTubeService:
                     thumbnail=entry.get('thumbnail') or self._get_thumbnail(entry.get('id')),
                     view_count=entry.get('view_count'),
                 ))
-        
+
         return tracks
 
     async def search_playlists(self, query: str, limit: int = 20) -> List[YouTubePlaylistResult]:
@@ -67,14 +102,7 @@ class YouTubeService:
 
         # sp=EgIQAw%3D%3D filters YouTube results to playlists only
         search_url = f"https://www.youtube.com/results?search_query={query}&sp=EgIQAw%3D%3D"
-
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            executor,
-            self._extract_info,
-            search_url,
-            search_opts,
-        )
+        result = await self._run_extraction(search_url, search_opts, timeout=30.0)
 
         playlists = []
         for entry in result.get('entries', [])[:limit]:
@@ -101,13 +129,7 @@ class YouTubeService:
             'no_warnings': True,
         }
 
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(
-            executor,
-            self._extract_info,
-            url,
-            playlist_opts,
-        )
+        info = await self._run_extraction(url, playlist_opts, timeout=20.0)
 
         tracks = []
         for entry in info.get('entries', []):
@@ -134,15 +156,9 @@ class YouTubeService:
     async def get_video_info(self, video_id: str) -> Dict[str, Any]:
         """Get detailed video information."""
         url = f"https://www.youtube.com/watch?v={video_id}"
-        
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(
-            executor,
-            self._extract_info,
-            url,
-            {}
-        )
-        
+
+        info = await self._run_extraction(url, {}, timeout=12.0)
+
         return {
             'id': info.get('id'),
             'title': info.get('title'),
@@ -156,160 +172,149 @@ class YouTubeService:
     async def get_related_videos(self, video_id: str, limit: int = 20) -> List[TrackSearchResult]:
         """Get related videos with smart variety - focuses on genre/artist, not song title repeats."""
         import random
-        
+
         url = f"https://www.youtube.com/watch?v={video_id}"
-        
-        # Extract video info
+
+        # Extract video info using flat extraction (faster)
         opts = {
             'extract_flat': 'in_playlist',
         }
-        
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(
-            executor,
-            self._extract_info,
-            url,
-            opts
-        )
-        
+
+        info = await self._run_extraction(url, opts, timeout=12.0)
+
         title = info.get('title', '')
         artist = info.get('uploader', '') or info.get('channel', '')
-        
+
         # Clean up artist name (remove "- Topic", "VEVO", etc.)
         artist_clean = artist.replace(' - Topic', '').replace('VEVO', '').strip()
-        
+
         # Build variety-focused search queries
-        # The key is to NOT search for the exact song title repeatedly
         variety_queries = []
-        
+
         # 1. Artist's other songs (high priority)
         if artist_clean:
             variety_queries.append(f"{artist_clean} songs")
             variety_queries.append(f"{artist_clean} playlist")
             variety_queries.append(f"best of {artist_clean}")
-        
+
         # 2. Similar artists/genre (extract genre hints from title)
         genre_hints = []
-        genre_keywords = ['love', 'ballad', 'rock', 'pop', 'acoustic', 'chill', 'sad', 
+        genre_keywords = ['love', 'ballad', 'rock', 'pop', 'acoustic', 'chill', 'sad',
                          'happy', 'dance', 'romantic', 'opm', 'indie', 'jazz', 'rnb',
                          'hiphop', 'rap', 'country', 'folk', 'edm', 'kpop', 'jpop']
-        
+
         title_lower = title.lower()
         for keyword in genre_keywords:
             if keyword in title_lower:
                 genre_hints.append(keyword)
-        
-        # Add generic genre queries
+
         if 'love' in title_lower or 'heart' in title_lower:
             variety_queries.append("love songs playlist")
             variety_queries.append("romantic songs")
-        
+
         if genre_hints:
             variety_queries.append(f"{genre_hints[0]} music playlist")
-        
-        # 3. "Similar to" searches
+
+        # 3. "Similar to" / mix queries
         variety_queries.append(f"songs like {artist_clean}")
-        variety_queries.append(f"{artist_clean} similar artists")
-        
-        # 4. Mix/radio style
         variety_queries.append(f"{artist_clean} mix")
         variety_queries.append("trending songs")
-        
-        # Fetch tracks from multiple queries for variety
+
+        # Fetch tracks from 2 random queries (down from 5) for speed
         all_tracks = []
         seen_ids = {video_id}  # Don't include original
         seen_titles = set()  # Avoid same song different versions
-        
-        # Extract core title words to avoid repeats (e.g., "close to you" variants)
-        title_words = set(title.lower().split()[:4])  # First 4 words of title
-        
+
+        # Extract core title words to avoid repeats
+        title_words = set(title.lower().split()[:4])
+
         # Shuffle queries for randomness
         random.shuffle(variety_queries)
-        
-        for query in variety_queries[:5]:  # Use top 5 random queries
+
+        for query in variety_queries[:2]:  # Use top 2 random queries (was 5)
             try:
-                results = await self.search(query, limit=8)
+                results = await self.search(query, limit=15)
                 for track in results:
                     if track.id in seen_ids:
                         continue
-                    
+
                     # Check if this is basically the same song (cover/remix)
                     track_title_lower = track.title.lower()
                     track_words = set(track_title_lower.split()[:4])
-                    
-                    # If too many words overlap with original title, skip (likely same song)
+
+                    # If too many words overlap with original title, skip
                     overlap = len(title_words & track_words)
-                    if overlap >= 3:  # 3+ matching words = probably same song
+                    if overlap >= 3:
                         continue
-                    
+
                     # Also check for exact title matches (normalized)
                     if any(existing.lower() == track_title_lower for existing in seen_titles):
                         continue
-                    
+
                     seen_ids.add(track.id)
                     seen_titles.add(track.title)
                     all_tracks.append(track)
-                    
+
             except Exception as e:
-                print(f"DEBUG: Query '{query}' failed: {e}")
+                logger.warning(f"Related query '{query}' failed: {e}")
                 continue
-        
+
         # Shuffle results for variety
         random.shuffle(all_tracks)
-        
-        # Limit results
+
         result = all_tracks[:limit]
-        
-        print(f"DEBUG: Generated {len(result)} varied tracks for '{title}' by '{artist_clean}'")
-        
+        logger.debug(f"Generated {len(result)} varied tracks for '{title}' by '{artist_clean}'")
+
         return result
 
     async def get_audio_stream_url(self, video_id: str) -> StreamInfo:
-        """Get the best audio stream URL for a video."""
+        """Get the best audio stream URL for a video (cached)."""
+        cache_key = f"audio:{video_id}"
+        cached = _get_cached_stream(cache_key)
+        if cached is not None:
+            return cached
+
         url = f"https://www.youtube.com/watch?v={video_id}"
-        
+
         audio_opts = {
             'format': settings.YOUTUBE_AUDIO_FORMAT,
         }
-        
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(
-            executor,
-            self._extract_info,
-            url,
-            audio_opts
-        )
-        
-        return StreamInfo(
+
+        info = await self._run_extraction(url, audio_opts, timeout=15.0)
+
+        stream_info = StreamInfo(
             url=info.get('url', ''),
             title=info.get('title', 'Unknown'),
             duration=info.get('duration', 0),
             thumbnail=info.get('thumbnail'),
         )
+        _set_cached_stream(cache_key, stream_info)
+        return stream_info
 
     async def get_video_stream_url(self, video_id: str, quality: str = "best") -> StreamInfo:
-        """Get video stream URL (for video playback)."""
+        """Get video stream URL (for video playback) (cached)."""
+        cache_key = f"video:{quality}:{video_id}"
+        cached = _get_cached_stream(cache_key)
+        if cached is not None:
+            return cached
+
         url = f"https://www.youtube.com/watch?v={video_id}"
-        
+
         video_opts = {
             'format': 'best[ext=mp4]/best' if quality == "best" else f'best[height<={quality}][ext=mp4]/best',
         }
-        
-        loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(
-            executor,
-            self._extract_info,
-            url,
-            video_opts
-        )
-        
-        return StreamInfo(
+
+        info = await self._run_extraction(url, video_opts, timeout=15.0)
+
+        stream_info = StreamInfo(
             url=info.get('url', ''),
             title=info.get('title', 'Unknown'),
             duration=info.get('duration', 0),
             thumbnail=info.get('thumbnail'),
             headers=info.get('http_headers'),
         )
+        _set_cached_stream(cache_key, stream_info)
+        return stream_info
 
     def _get_thumbnail(self, video_id: str) -> str:
         """Get thumbnail URL from video ID."""

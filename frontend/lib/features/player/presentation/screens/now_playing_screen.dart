@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart' hide Track;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../config/theme.dart';
@@ -170,7 +169,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen>
                                   
                                   debugPrint('Adding track ${track.id} to playlist ${playlist.id}...');
                                   final result = await ref.read(playlistProvider.notifier)
-                                      .addTrackToPlaylist(playlist.id, track.id);
+                                      .addTrackToPlaylist(playlist.id, track);
                                   debugPrint('Add result: $result');
                                   
                                   if (parentContext.mounted) {
@@ -326,9 +325,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen>
                         IconButton(
                           icon: const Icon(Icons.more_vert, color: Colors.white),
                           onPressed: () {
-                            if (track != null) {
-                              _showAddToPlaylistSheet(context, track);
-                            }
+                            _showAddToPlaylistSheet(context, track);
                           },
                         ),
                       ],

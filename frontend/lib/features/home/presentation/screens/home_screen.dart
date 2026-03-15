@@ -6,6 +6,7 @@ import 'package:youtube_music_player/shared/widgets/app_shell.dart';
 import 'package:youtube_music_player/core/providers/media_player_provider.dart';
 import 'package:youtube_music_player/features/search/presentation/screens/search_screen.dart';
 import 'package:youtube_music_player/features/library/presentation/screens/library_screen.dart';
+import 'package:youtube_music_player/features/settings/presentation/screens/settings_screen.dart';
 
 /// Home screen with bottom navigation and persistent mini player
 class HomeScreen extends ConsumerStatefulWidget {
@@ -91,6 +92,10 @@ class _HomeContent extends ConsumerWidget {
           SliverAppBar(
             backgroundColor: AppTheme.spotifyBlack,
             floating: true,
+            leading: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Image.asset('assets/images/logo.png'),
+            ),
             title: _getGreeting(),
             actions: [
               IconButton(
@@ -103,7 +108,11 @@ class _HomeContent extends ConsumerWidget {
               ),
               IconButton(
                 icon: const Icon(Icons.settings_outlined),
-                onPressed: () {},
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                },
               ),
             ],
           ),
@@ -140,7 +149,7 @@ class _HomeContent extends ConsumerWidget {
                         onTap: () {
                           // Play using global player
                           ref.read(mediaPlayerControllerProvider.notifier)
-                              .playTrack(track, videoMode: true);
+                              .playTrack(track);
                         },
                       );
                     },
@@ -171,7 +180,7 @@ class _HomeContent extends ConsumerWidget {
                     imageUrl: track.thumbnailUrl,
                     onTap: () {
                       ref.read(mediaPlayerControllerProvider.notifier)
-                          .playTrack(track, videoMode: true);
+                          .playTrack(track);
                     },
                   );
                 },
@@ -200,7 +209,7 @@ class _HomeContent extends ConsumerWidget {
                     imageUrl: track.thumbnailUrl,
                     onTap: () {
                       ref.read(mediaPlayerControllerProvider.notifier)
-                          .playTrack(track, videoMode: true);
+                          .playTrack(track);
                     },
                   );
                 },

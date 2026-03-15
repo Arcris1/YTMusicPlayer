@@ -1,7 +1,9 @@
 version: '3.8'
+name: spotube
 
 services:
   api:
+    container_name: spotube-api
     build: .
     ports:
       - "8001:8000" # Changed to 8001 to avoid conflict
@@ -16,6 +18,7 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
+    container_name: spotube-db
     image: postgres:15-alpine
     environment:
       - POSTGRES_USER=postgres
@@ -27,6 +30,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
+    container_name: spotube-redis
     image: redis:7-alpine
     ports:
       - "6379:6379"

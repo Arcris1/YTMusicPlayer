@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:dio/dio.dart';
 import '../../../../config/theme.dart';
-import '../../../../config/constants.dart';
-import '../../../../core/api/api_client.dart';
+import '../../../../core/providers/service_providers.dart';
 import '../../../../core/providers/media_player_provider.dart';
+import '../../../../core/services/youtube_service.dart';
 import '../../../../shared/models/track.dart';
 import '../../../../shared/models/youtube_playlist.dart';
 import '../../../../shared/widgets/track_tile.dart';
@@ -47,9 +46,9 @@ class SearchState {
 
 /// Search notifier
 class SearchNotifier extends StateNotifier<SearchState> {
-  final ApiClient _apiClient;
+  final YouTubeService _youtubeService;
 
-  SearchNotifier(this._apiClient) : super(const SearchState());
+  SearchNotifier(this._youtubeService) : super(const SearchState());
 
   Future<void> search(String query) async {
     if (query.isEmpty) {
@@ -61,34 +60,20 @@ class SearchNotifier extends StateNotifier<SearchState> {
 
     try {
       // Fire both track and playlist searches concurrently
-      final responses = await Future.wait([
-        _apiClient.dio.get(
-          ApiConstants.search,
-          queryParameters: {'query': query, 'limit': 30},
-        ),
-        _apiClient.dio.get(
-          ApiConstants.searchPlaylists,
-          queryParameters: {'query': query, 'limit': 20},
-        ),
+      final results = await Future.wait([
+        _youtubeService.searchVideos(query, limit: 30),
+        _youtubeService.searchPlaylists(query, limit: 20),
       ]);
 
-      final trackResults = (responses[0].data['results'] as List)
-          .map((json) => Track.fromJson(json))
-          .toList();
-
-      final playlistResults = (responses[1].data['results'] as List)
-          .map((json) => YouTubePlaylist.fromJson(json))
-          .toList();
-
       state = state.copyWith(
         isLoading: false,
-        results: trackResults,
-        playlistResults: playlistResults,
+        results: results[0] as List<Track>,
+        playlistResults: results[1] as List<YouTubePlaylist>,
       );
-    } on DioException catch (e) {
+    } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        error: e.message ?? 'Search failed',
+        error: e.toString(),
       );
     }
   }
@@ -100,7 +85,7 @@ class SearchNotifier extends StateNotifier<SearchState> {
 
 final searchProvider =
     StateNotifierProvider<SearchNotifier, SearchState>((ref) {
-  return SearchNotifier(ref.read(apiClientProvider));
+  return SearchNotifier(ref.read(youtubeServiceProvider));
 });
 
 /// Search screen
@@ -364,7 +349,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
               leading: const Icon(Icons.queue_music, color: AppTheme.textPrimary),
               title: const Text('Add to queue'),
               onTap: () {
-                // TODO: Implement queue
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Added to queue')),
@@ -376,7 +360,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
               title: const Text('Share'),
               onTap: () {
                 Navigator.pop(context);
-                // TODO: Share functionality
               },
             ),
           ],
@@ -395,7 +378,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
         return Consumer(
           builder: (context, ref, _) {
             final playlistState = ref.watch(playlistProvider);
-            print('Search Playlist Sheet: count=${playlistState.playlists.length}');
 
             // Force load if empty
             if (!playlistState.isLoading && playlistState.playlists.isEmpty) {
@@ -423,11 +405,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                        child: CircularProgressIndicator(color: AppTheme.primaryGreen),
                      )
                   else if (playlistState.playlists.isEmpty)
-                     Padding(
-                       padding: const EdgeInsets.all(32),
+                     const Padding(
+                       padding: EdgeInsets.all(32),
                        child: Column(
                          children: [
-                           const Text(
+                           Text(
                              'No playlists yet',
                              style: TextStyle(color: Colors.white54),
                            ),
@@ -459,9 +441,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen>
                             onTap: () async {
                               Navigator.pop(sheetContext);
 
-                              print('Adding track ${track.id} to playlist ${playlist.id}...');
                               final result = await ref.read(playlistProvider.notifier)
-                                  .addTrackToPlaylist(playlist.id, track.id);
+                                  .addTrackToPlaylist(playlist.id, track);
 
                               if (parentContext.mounted) {
                                 ScaffoldMessenger.of(parentContext).showSnackBar(

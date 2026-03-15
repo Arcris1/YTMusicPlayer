@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/api/api_client.dart';
+import '../../../core/services/database_service.dart';
+import '../../../core/providers/service_providers.dart';
 import '../../../shared/models/playlist.dart';
+import '../../../shared/models/track.dart';
 
 /// Playlist state
 class PlaylistState {
@@ -33,66 +35,42 @@ class PlaylistState {
 
 /// Playlist notifier
 class PlaylistNotifier extends StateNotifier<PlaylistState> {
-  final ApiClient _apiClient;
+  final DatabaseService _dbService;
 
-  PlaylistNotifier(this._apiClient) : super(const PlaylistState()) {
+  PlaylistNotifier(this._dbService) : super(const PlaylistState()) {
     loadPlaylists();
   }
 
   Future<void> loadPlaylists() async {
     state = state.copyWith(isLoading: true, error: null);
     try {
-      final playlists = await _apiClient.getPlaylists();
-      state = state.copyWith(isLoading: false, playlists: playlists);
-      
-      // Attempt to load "Liked Songs" tracks to populate likedTrackIds
-      try {
-        if (playlists.isNotEmpty) {
-          final likedPlaylist = playlists.firstWhere(
-            (p) => p.name == 'Liked Songs', 
-            orElse: () => playlists.first
-          );
-          if (likedPlaylist.name == 'Liked Songs') {
-             _fetchLikedTracks(likedPlaylist.id);
-          }
-        }
-      } catch (_) {}
-
-    } catch (e, stack) {
-      print('Error loading playlists: $e');
-      print(stack);
+      final playlists = await _dbService.getPlaylists();
+      final likedIds = await _dbService.getLikedTrackIds();
+      state = state.copyWith(
+        isLoading: false,
+        playlists: playlists,
+        likedTrackIds: likedIds,
+      );
+    } catch (e) {
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
 
-  Future<void> _fetchLikedTracks(String playlistId) async {
+  Future<void> toggleLike(Track track) async {
+    final isLiked = state.likedTrackIds.contains(track.id);
     try {
-      final tracks = await _apiClient.getPlaylistTracks(playlistId);
-      final ids = tracks.map((t) => t.id).toSet();
-      state = state.copyWith(likedTrackIds: ids);
-    } catch (e) {
-      print('Error loading liked tracks: $e');
-    }
-  }
-
-  Future<void> toggleLike(String likedPlaylistId, String trackId) async {
-    final isLiked = state.likedTrackIds.contains(trackId);
-    try {
+      await _dbService.toggleLike(track);
       if (isLiked) {
-        // Unlike (remove)
-        await _apiClient.removeTrackFromPlaylist(likedPlaylistId, trackId);
         state = state.copyWith(
-          likedTrackIds: Set.from(state.likedTrackIds)..remove(trackId)
+          likedTrackIds: Set.from(state.likedTrackIds)..remove(track.id),
         );
       } else {
-         // Like (add)
-         await _apiClient.addTrackToPlaylist(likedPlaylistId, trackId);
-         state = state.copyWith(
-          likedTrackIds: Set.from(state.likedTrackIds)..add(trackId)
+        state = state.copyWith(
+          likedTrackIds: Set.from(state.likedTrackIds)..add(track.id),
         );
       }
       // Refresh playlists to update counts
-      loadPlaylists(); 
+      loadPlaylists();
     } catch (e) {
       print('Error toggling like: $e');
     }
@@ -100,30 +78,21 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
   Future<bool> createPlaylist(String name, {String? description}) async {
     try {
-      print('Creating playlist: $name');
-      await _apiClient.createPlaylist(name, description: description);
-      print('Playlist created, reloading...');
-      await loadPlaylists(); // Refresh list
+      await _dbService.createPlaylist(name, description: description);
+      await loadPlaylists();
       return true;
-    } catch (e, stack) {
-      print('Error creating playlist: $e');
-      print(stack);
+    } catch (e) {
       state = state.copyWith(error: 'Failed to create playlist');
       return false;
     }
   }
 
-  Future<String?> addTrackToPlaylist(String playlistId, String trackId) async {
+  Future<String?> addTrackToPlaylist(String playlistId, Track track) async {
     try {
-      final message = await _apiClient.addTrackToPlaylist(playlistId, trackId);
-      // We don't necessarily need to reload all playlists, but maybe update track count?
-      // For now, easy way:
+      final message = await _dbService.addTrackToPlaylist(playlistId, track);
       await loadPlaylists();
       return message;
-    } catch (e, stack) {
-      print('Error adding track to playlist: $e');
-      print(stack);
-      // Don't update global error state for this, return handling to UI
+    } catch (e) {
       return null;
     }
   }
@@ -131,6 +100,6 @@ class PlaylistNotifier extends StateNotifier<PlaylistState> {
 
 /// Provider for playlist notifier
 final playlistProvider = StateNotifierProvider<PlaylistNotifier, PlaylistState>((ref) {
-  final apiClient = ref.watch(apiClientProvider);
-  return PlaylistNotifier(apiClient);
+  final dbService = ref.watch(databaseServiceProvider);
+  return PlaylistNotifier(dbService);
 });

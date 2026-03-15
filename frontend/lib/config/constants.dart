@@ -1,27 +1,18 @@
-/// API configuration constants
-class ApiConstants {
-  static const String baseUrl = 'http://localhost:8001';
-  static const String apiV1 = '/api/v1';
-  
-  // Auth endpoints
-  static const String login = '$apiV1/auth/login';
-  static const String register = '$apiV1/auth/register';
-  static const String refresh = '$apiV1/auth/refresh';
-  static const String me = '$apiV1/auth/me';
-  
-  // Search endpoints
-  static const String search = '$apiV1/search';
-  static const String searchPlaylists = '$apiV1/search/playlists';
-  static const String suggestions = '$apiV1/search/suggestions';
-  
-  // Playback endpoints
-  static const String audioStream = '$apiV1/playback/audio';
-  static const String videoStream = '$apiV1/playback/video';
-  static const String trackInfo = '$apiV1/playback/info';
-  
-  // Playlist endpoints
-  static const String playlists = '$apiV1/playlists';
-  
-  // Related/Autoplay endpoints
-  static const String relatedTracks = '$apiV1/playback/related';
+/// App configuration constants
+class AppConstants {
+  static const String appName = 'SpoTube';
+  static const String likedSongsPlaylistId = 'liked_songs';
+
+  // Backend API
+  static const String apiBaseUrl = 'http://localhost:8001';
+  static const String apiPrefix = '/api/v1';
+
+  // Search limits
+  static const int searchVideoLimit = 30;
+  static const int searchPlaylistLimit = 20;
+  static const int relatedVideoLimit = 20;
+
+  // Secure storage keys
+  static const String accessTokenKey = 'access_token';
+  static const String refreshTokenKey = 'refresh_token';
 }

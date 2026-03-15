@@ -4,6 +4,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../config/theme.dart';
 import '../../core/providers/media_player_provider.dart';
 import '../../features/library/providers/playlist_provider.dart';
+import '../../features/search/presentation/screens/youtube_playlist_detail_screen.dart';
 import '../../shared/models/track.dart';
 
 /// Mini player bar that appears at bottom of screen
@@ -108,7 +109,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                                 try {
                                   Navigator.pop(sheetContext);
                                   final result = await ref.read(playlistProvider.notifier)
-                                      .addTrackToPlaylist(playlist.id, track.id);
+                                      .addTrackToPlaylist(playlist.id, track);
                                   
                                   if (parentContext.mounted) {
                                     ScaffoldMessenger.of(parentContext).hideCurrentSnackBar();
@@ -148,23 +149,82 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
     }
 
     final track = playerState.currentTrack!;
+    final source = playerState.playlistSource;
+    debugPrint('[MiniPlayer] source=${source?.title}');
 
-    return GestureDetector(
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // "Playing from" bar
+        if (source != null)
+          GestureDetector(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => YouTubePlaylistDetailScreen(
+                    playlistId: source.id,
+                    playlistTitle: source.title,
+                    thumbnail: source.thumbnail,
+                    channel: source.channel,
+                  ),
+                ),
+              );
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryGreen.withValues(alpha: 0.12),
+                border: Border(
+                  top: BorderSide(color: Colors.grey.shade800, width: 0.5),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.playlist_play_rounded,
+                      color: AppTheme.primaryGreen, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Playing from: ',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      source.title,
+                      style: const TextStyle(
+                        color: AppTheme.primaryGreen,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right_rounded,
+                      color: AppTheme.textSecondary, size: 16),
+                ],
+              ),
+            ),
+          ),
+        // Main mini player
+        GestureDetector(
       onTap: widget.onTap,
       behavior: HitTestBehavior.opaque,
       child: Container(
         height: 64,
         decoration: BoxDecoration(
           color: AppTheme.cardDark,
-          border: Border(
-            top: BorderSide(
-              color: Colors.grey.shade800,
-              width: 0.5,
-            ),
-          ),
+          border: source == null
+              ? Border(
+                  top: BorderSide(color: Colors.grey.shade800, width: 0.5),
+                )
+              : null,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.3),
+              color: Colors.black.withValues(alpha: 0.3),
               blurRadius: 8,
               offset: const Offset(0, -2),
             ),
@@ -369,6 +429,8 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
           ],
         ),
       ),
+    ),
+      ],
     );
   }
 }
