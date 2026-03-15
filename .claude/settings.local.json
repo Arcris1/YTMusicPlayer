@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(head:*)",
+      "Bash(cd \"C:/Users/Silang/Documents/Development/YTMusicPlayer/frontend\" && flutter pub get 2>&1)",
+      "Bash(cd \"C:/Users/Silang/Documents/Development/YTMusicPlayer/frontend\" && flutter analyze 2>&1)",
+      "WebSearch",
+      "WebFetch(domain:pub.dev)",
+      "WebFetch(domain:medium.com)",
+      "Bash(cd \"C:/Users/Silang/Documents/Development/YTMusicPlayer/frontend\" && flutter analyze lib/main.dart lib/core/services/audio_handler.dart lib/core/providers/media_player_provider.dart 2>&1)",
+      "Bash(cd \"C:/Users/Silang/Documents/Development/YTMusicPlayer/frontend\" && flutter analyze lib/main.dart 2>&1)",
+      "Bash(grep:*)",
+      "Bash(cd:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

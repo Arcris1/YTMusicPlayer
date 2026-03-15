@@ -11,6 +11,7 @@ class ApiConstants {
   
   // Search endpoints
   static const String search = '$apiV1/search';
+  static const String searchPlaylists = '$apiV1/search/playlists';
   static const String suggestions = '$apiV1/search/suggestions';
   
   // Playback endpoints

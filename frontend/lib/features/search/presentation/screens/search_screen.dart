@@ -6,19 +6,24 @@ import '../../../../config/constants.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/providers/media_player_provider.dart';
 import '../../../../shared/models/track.dart';
+import '../../../../shared/models/youtube_playlist.dart';
 import '../../../../shared/widgets/track_tile.dart';
+import '../../../../shared/widgets/playlist_tile.dart';
 import '../../../library/providers/playlist_provider.dart';
+import 'youtube_playlist_detail_screen.dart';
 
 /// Search state
 class SearchState {
   final bool isLoading;
   final List<Track> results;
+  final List<YouTubePlaylist> playlistResults;
   final String query;
   final String? error;
 
   const SearchState({
     this.isLoading = false,
     this.results = const [],
+    this.playlistResults = const [],
     this.query = '',
     this.error,
   });
@@ -26,12 +31,14 @@ class SearchState {
   SearchState copyWith({
     bool? isLoading,
     List<Track>? results,
+    List<YouTubePlaylist>? playlistResults,
     String? query,
     String? error,
   }) {
     return SearchState(
       isLoading: isLoading ?? this.isLoading,
       results: results ?? this.results,
+      playlistResults: playlistResults ?? this.playlistResults,
       query: query ?? this.query,
       error: error,
     );
@@ -53,16 +60,31 @@ class SearchNotifier extends StateNotifier<SearchState> {
     state = state.copyWith(isLoading: true, query: query, error: null);
 
     try {
-      final response = await _apiClient.dio.get(
-        ApiConstants.search,
-        queryParameters: {'query': query, 'limit': 30},
-      );
+      // Fire both track and playlist searches concurrently
+      final responses = await Future.wait([
+        _apiClient.dio.get(
+          ApiConstants.search,
+          queryParameters: {'query': query, 'limit': 30},
+        ),
+        _apiClient.dio.get(
+          ApiConstants.searchPlaylists,
+          queryParameters: {'query': query, 'limit': 20},
+        ),
+      ]);
 
-      final results = (response.data['results'] as List)
+      final trackResults = (responses[0].data['results'] as List)
           .map((json) => Track.fromJson(json))
           .toList();
 
-      state = state.copyWith(isLoading: false, results: results);
+      final playlistResults = (responses[1].data['results'] as List)
+          .map((json) => YouTubePlaylist.fromJson(json))
+          .toList();
+
+      state = state.copyWith(
+        isLoading: false,
+        results: trackResults,
+        playlistResults: playlistResults,
+      );
     } on DioException catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -89,14 +111,23 @@ class SearchScreen extends ConsumerStatefulWidget {
   ConsumerState<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends ConsumerState<SearchScreen> {
+class _SearchScreenState extends ConsumerState<SearchScreen>
+    with SingleTickerProviderStateMixin {
   final _searchController = TextEditingController();
   final _focusNode = FocusNode();
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     _focusNode.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -109,11 +140,27 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final searchState = ref.watch(searchProvider);
     final playerState = ref.watch(mediaPlayerControllerProvider);
 
+    // Determine if we have results to show tabs
+    final hasResults = searchState.results.isNotEmpty ||
+        searchState.playlistResults.isNotEmpty;
+
     return Scaffold(
       backgroundColor: AppTheme.spotifyBlack,
       appBar: AppBar(
         backgroundColor: AppTheme.spotifyBlack,
         title: const Text('Search'),
+        bottom: hasResults
+            ? TabBar(
+                controller: _tabController,
+                indicatorColor: AppTheme.primaryGreen,
+                labelColor: AppTheme.textPrimary,
+                unselectedLabelColor: AppTheme.textSecondary,
+                tabs: [
+                  Tab(text: 'Songs (${searchState.results.length})'),
+                  Tab(text: 'Playlists (${searchState.playlistResults.length})'),
+                ],
+              )
+            : null,
       ),
       body: Column(
         children: [
@@ -147,7 +194,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               onSubmitted: _onSearch,
               onChanged: (value) {
                 setState(() {}); // Rebuild for suffix icon
-                // Debounce could be added here
               },
             ),
           ),
@@ -182,7 +228,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           ],
                         ),
                       )
-                    : searchState.results.isEmpty
+                    : !hasResults
                         ? Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -197,7 +243,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                 const SizedBox(height: 16),
                                 Text(
                                   searchState.query.isEmpty
-                                      ? 'Search for songs, artists, or albums'
+                                      ? 'Search for songs, artists, or playlists'
                                       : 'No results found',
                                   style: const TextStyle(
                                     color: AppTheme.textSecondary,
@@ -206,25 +252,80 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                               ],
                             ),
                           )
-                        : ListView.builder(
-                            itemCount: searchState.results.length,
-                            itemBuilder: (context, index) {
-                              final track = searchState.results[index];
-                              final isPlaying = playerState.currentTrack?.id == track.id;
-                              
-                              return TrackTile(
-                                track: track,
-                                isPlaying: isPlaying,
-                                onTap: () {
-                                  // Queue all search results for autoplay
-                                  ref.read(mediaPlayerControllerProvider.notifier)
-                                      .playPlaylist(searchState.results, initialIndex: index);
-                                },
-                                onMorePressed: () {
-                                  _showTrackOptions(context, track);
-                                },
-                              );
-                            },
+                        : TabBarView(
+                            controller: _tabController,
+                            children: [
+                              // Songs tab
+                              searchState.results.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'No songs found',
+                                        style: TextStyle(
+                                            color: AppTheme.textSecondary),
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      itemCount: searchState.results.length,
+                                      itemBuilder: (context, index) {
+                                        final track =
+                                            searchState.results[index];
+                                        final isPlaying =
+                                            playerState.currentTrack?.id ==
+                                                track.id;
+
+                                        return TrackTile(
+                                          track: track,
+                                          isPlaying: isPlaying,
+                                          onTap: () {
+                                            ref
+                                                .read(
+                                                    mediaPlayerControllerProvider
+                                                        .notifier)
+                                                .playPlaylist(
+                                                    searchState.results,
+                                                    initialIndex: index);
+                                          },
+                                          onMorePressed: () {
+                                            _showTrackOptions(context, track);
+                                          },
+                                        );
+                                      },
+                                    ),
+                              // Playlists tab
+                              searchState.playlistResults.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'No playlists found',
+                                        style: TextStyle(
+                                            color: AppTheme.textSecondary),
+                                      ),
+                                    )
+                                  : ListView.builder(
+                                      itemCount:
+                                          searchState.playlistResults.length,
+                                      itemBuilder: (context, index) {
+                                        final playlist =
+                                            searchState.playlistResults[index];
+
+                                        return PlaylistTile(
+                                          playlist: playlist,
+                                          onTap: () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    YouTubePlaylistDetailScreen(
+                                                  playlistId: playlist.id,
+                                                  playlistTitle: playlist.title,
+                                                  thumbnail: playlist.thumbnail,
+                                                  channel: playlist.channel,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                        );
+                                      },
+                                    ),
+                            ],
                           ),
           ),
         ],
@@ -295,7 +396,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           builder: (context, ref, _) {
             final playlistState = ref.watch(playlistProvider);
             print('Search Playlist Sheet: count=${playlistState.playlists.length}');
-            
+
             // Force load if empty
             if (!playlistState.isLoading && playlistState.playlists.isEmpty) {
                Future.microtask(() => ref.read(playlistProvider.notifier).loadPlaylists());
@@ -357,11 +458,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                             ),
                             onTap: () async {
                               Navigator.pop(sheetContext);
-                              
+
                               print('Adding track ${track.id} to playlist ${playlist.id}...');
                               final result = await ref.read(playlistProvider.notifier)
                                   .addTrackToPlaylist(playlist.id, track.id);
-                              
+
                               if (parentContext.mounted) {
                                 ScaffoldMessenger.of(parentContext).showSnackBar(
                                   SnackBar(

@@ -4,7 +4,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from app.config import get_settings
-from app.schemas.user import TrackSearchResult, StreamInfo
+from app.schemas.user import TrackSearchResult, StreamInfo, YouTubePlaylistResult
 
 settings = get_settings()
 
@@ -57,6 +57,79 @@ class YouTubeService:
                 ))
         
         return tracks
+
+    async def search_playlists(self, query: str, limit: int = 20) -> List[YouTubePlaylistResult]:
+        """Search YouTube for playlists matching the query."""
+        search_opts = {
+            'extract_flat': True,
+            'default_search': 'ytsearch',
+        }
+
+        # sp=EgIQAw%3D%3D filters YouTube results to playlists only
+        search_url = f"https://www.youtube.com/results?search_query={query}&sp=EgIQAw%3D%3D"
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor,
+            self._extract_info,
+            search_url,
+            search_opts,
+        )
+
+        playlists = []
+        for entry in result.get('entries', [])[:limit]:
+            if not entry:
+                continue
+            playlists.append(YouTubePlaylistResult(
+                id=entry.get('id', ''),
+                title=entry.get('title', 'Unknown Playlist'),
+                channel=entry.get('uploader') or entry.get('channel'),
+                video_count=entry.get('playlist_count') or entry.get('n_entries'),
+                thumbnail=entry.get('thumbnails', [{}])[-1].get('url') if entry.get('thumbnails') else None,
+                url=entry.get('url') or entry.get('webpage_url'),
+            ))
+
+        return playlists
+
+    async def get_playlist_tracks(self, playlist_id: str) -> Dict[str, Any]:
+        """Fetch tracks from a YouTube playlist."""
+        url = f"https://www.youtube.com/playlist?list={playlist_id}"
+
+        playlist_opts = {
+            'extract_flat': 'in_playlist',
+            'quiet': True,
+            'no_warnings': True,
+        }
+
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(
+            executor,
+            self._extract_info,
+            url,
+            playlist_opts,
+        )
+
+        tracks = []
+        for entry in info.get('entries', []):
+            if not entry:
+                continue
+            tracks.append(TrackSearchResult(
+                id=entry.get('id', ''),
+                title=entry.get('title', 'Unknown'),
+                artist=entry.get('uploader') or entry.get('channel'),
+                duration=entry.get('duration'),
+                thumbnail=entry.get('thumbnails', [{}])[-1].get('url') if entry.get('thumbnails') else self._get_thumbnail(entry.get('id', '')),
+                view_count=entry.get('view_count'),
+            ))
+
+        return {
+            'playlist_id': playlist_id,
+            'title': info.get('title', 'Unknown Playlist'),
+            'channel': info.get('uploader') or info.get('channel'),
+            'thumbnail': info.get('thumbnails', [{}])[-1].get('url') if info.get('thumbnails') else None,
+            'video_count': len(tracks),
+            'tracks': tracks,
+        }
 
     async def get_video_info(self, video_id: str) -> Dict[str, Any]:
         """Get detailed video information."""

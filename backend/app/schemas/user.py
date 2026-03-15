@@ -108,6 +108,31 @@ class SearchResponse(BaseModel):
     total: int
 
 
+# YouTube Playlist Search Schemas
+class YouTubePlaylistResult(BaseModel):
+    id: str
+    title: str
+    channel: Optional[str] = None
+    video_count: Optional[int] = None
+    thumbnail: Optional[str] = None
+    url: Optional[str] = None
+
+
+class PlaylistSearchResponse(BaseModel):
+    query: str
+    results: List[YouTubePlaylistResult]
+    total: int
+
+
+class PlaylistTracksResponse(BaseModel):
+    playlist_id: str
+    title: str
+    channel: Optional[str] = None
+    thumbnail: Optional[str] = None
+    video_count: Optional[int] = None
+    tracks: List[TrackSearchResult] = []
+
+
 # Stream Schemas
 class StreamInfo(BaseModel):
     url: str
