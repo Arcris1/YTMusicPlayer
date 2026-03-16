@@ -60,6 +60,8 @@ class YouTubeService:
             'retries': 3,
             'extractor_retries': 2,
             'geo_bypass': True,
+            # Required for yt-dlp to use deno for YouTube JS signature solving
+            'remote_components': ['ejs:github'],
         }
         # Use cookies file if it exists (needed for VPS IPs flagged by YouTube)
         if os.path.isfile(self.COOKIES_FILE):
