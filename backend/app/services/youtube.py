@@ -1,5 +1,6 @@
 import yt_dlp
 from typing import Optional, List, Dict, Any
+from urllib.parse import quote_plus
 import asyncio
 import time
 import logging
@@ -101,7 +102,7 @@ class YouTubeService:
         }
 
         # sp=EgIQAw%3D%3D filters YouTube results to playlists only
-        search_url = f"https://www.youtube.com/results?search_query={query}&sp=EgIQAw%3D%3D"
+        search_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp=EgIQAw%3D%3D"
         result = await self._run_extraction(search_url, search_opts, timeout=30.0)
 
         playlists = []

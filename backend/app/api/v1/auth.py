@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,12 +18,8 @@ from app.core.security import (
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-
-import logging
-import traceback
-
 logger = logging.getLogger(__name__)
+
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -33,7 +31,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
-    
+
     # Check if username exists
     result = await db.execute(select(User).where(User.username == user_data.username))
     if result.scalar_one_or_none():
@@ -41,7 +39,7 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already taken"
         )
-    
+
     # Create user
     try:
         user = User(
@@ -52,14 +50,13 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
         db.add(user)
         await db.commit()
         await db.refresh(user)
-        
+
         return user
     except Exception as e:
-        logger.error(f"Registration error: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Registration error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration failed: {str(e)}"
+            detail="Registration failed. Please try again later."
         )
 
 
@@ -69,23 +66,30 @@ async def login(
     db: AsyncSession = Depends(get_db)
 ):
     """Login and receive access and refresh tokens."""
-    # Find user by email (username field contains email)
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
-    
-    if not user or not verify_password(form_data.password, user.hashed_password):
+
+    # Always run password verification to prevent timing-based user enumeration
+    if user:
+        password_valid = verify_password(form_data.password, user.hashed_password)
+    else:
+        # Hash a dummy password to keep response time constant
+        get_password_hash(form_data.password)
+        password_valid = False
+
+    if not user or not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User account is disabled"
         )
-    
+
     return Token(
         access_token=create_access_token(data={"sub": user.id}),
         refresh_token=create_refresh_token(data={"sub": user.id}),
@@ -96,23 +100,23 @@ async def login(
 async def refresh_token(token_data: TokenRefresh, db: AsyncSession = Depends(get_db)):
     """Refresh access token using refresh token."""
     payload = decode_token(token_data.refresh_token)
-    
+
     if payload.get("type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid refresh token"
         )
-    
+
     user_id = payload.get("sub")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    
+
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive"
         )
-    
+
     return Token(
         access_token=create_access_token(data={"sub": user.id}),
         refresh_token=create_refresh_token(data={"sub": user.id}),
@@ -127,11 +131,11 @@ async def get_current_user(
     """Get current authenticated user."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
     return user

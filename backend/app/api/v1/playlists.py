@@ -221,7 +221,6 @@ async def add_track_to_playlist(
                 thumbnail=info.get('thumbnail'),
             )
             db.add(track)
-            db.add(track)
             await db.flush()
         
         # Check if track is already in playlist
@@ -257,11 +256,10 @@ async def add_track_to_playlist(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        logging.getLogger(__name__).error(f"Error adding track: {str(e)}\n{traceback.format_exc()}")
+        logging.getLogger(__name__).error(f"Error adding track: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add track: {str(e)}"
+            detail="Failed to add track. Please try again later."
         )
 
 

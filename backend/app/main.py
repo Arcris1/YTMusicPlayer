@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from contextlib import asynccontextmanager
 
 from app.config import get_settings
@@ -13,30 +14,43 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
-    # Startup
     await init_db()
     yield
-    # Shutdown
-    pass
 
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json" if settings.DEBUG else None,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS — use explicit origins, not wildcard
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly in production
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to every response."""
+    response: Response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if not settings.DEBUG:
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+    return response
+
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)

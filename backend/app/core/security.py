@@ -1,3 +1,5 @@
+import hashlib
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
@@ -12,18 +14,31 @@ settings = get_settings()
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_PREFIX}/auth/login")
 
+# YouTube video IDs are exactly 11 chars: alphanumeric, dash, underscore
+VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def validate_video_id(video_id: str) -> str:
+    """Validate and return a YouTube video ID, or raise 400."""
+    if not VIDEO_ID_PATTERN.match(video_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid video ID format",
+        )
+    return video_id
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    pre_hashed = hashlib.sha256(plain_password.encode("utf-8")).hexdigest()
+    return pwd_context.verify(pre_hashed, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
-    """Hash a password."""
-    # bcrypt (used by passlib) has a limit of 72 bytes
-    if len(password.encode('utf-8')) > 72:
-        return pwd_context.hash(password[:71]) # simple truncation
-    return pwd_context.hash(password)
+    """Hash a password. Pre-hash with SHA-256 to safely handle any length."""
+    # Pre-hash to avoid pbkdf2/bcrypt length limits
+    pre_hashed = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return pwd_context.hash(pre_hashed)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

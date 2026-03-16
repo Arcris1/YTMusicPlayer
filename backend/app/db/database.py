@@ -6,7 +6,7 @@ settings = get_settings()
 
 engine = create_async_engine(
     settings.DATABASE_URL,
-    echo=settings.DEBUG,
+    echo=False,  # Never log SQL in production; set DEBUG_SQL=1 env var if needed locally
     future=True,
 )
 

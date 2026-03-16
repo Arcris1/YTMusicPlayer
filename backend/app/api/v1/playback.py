@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 from app.services.youtube import get_youtube_service, YouTubeService
 from app.schemas.user import StreamInfo
-from app.core.security import get_current_user_id
+from app.core.security import get_current_user_id, validate_video_id
 
 router = APIRouter(prefix="/playback", tags=["Playback"])
 logger = logging.getLogger(__name__)
@@ -15,11 +15,12 @@ logger = logging.getLogger(__name__)
 async def get_audio_stream(
     video_id: str,
     youtube: YouTubeService = Depends(get_youtube_service),
+    _user_id: str = Depends(get_current_user_id),
 ):
     """Get audio stream URL for a video."""
+    validate_video_id(video_id)
     try:
-        stream_info = await youtube.get_audio_stream_url(video_id)
-        return stream_info
+        return await youtube.get_audio_stream_url(video_id)
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -29,7 +30,7 @@ async def get_audio_stream(
         logger.warning(f"Audio stream failed for {video_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not get audio stream: {str(e)}",
+            detail="Could not get audio stream",
         )
 
 
@@ -38,11 +39,12 @@ async def get_video_stream(
     video_id: str,
     quality: str = Query(default="best", pattern="^(best|1080|720|480|360)$"),
     youtube: YouTubeService = Depends(get_youtube_service),
+    _user_id: str = Depends(get_current_user_id),
 ):
     """Get video stream URL for a video."""
+    validate_video_id(video_id)
     try:
-        stream_info = await youtube.get_video_stream_url(video_id, quality)
-        return stream_info
+        return await youtube.get_video_stream_url(video_id, quality)
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -52,7 +54,7 @@ async def get_video_stream(
         logger.warning(f"Video stream failed for {video_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not get video stream: {str(e)}",
+            detail="Could not get video stream",
         )
 
 
@@ -60,11 +62,12 @@ async def get_video_stream(
 async def get_track_info(
     video_id: str,
     youtube: YouTubeService = Depends(get_youtube_service),
+    _user_id: str = Depends(get_current_user_id),
 ):
     """Get detailed track/video information."""
+    validate_video_id(video_id)
     try:
-        info = await youtube.get_video_info(video_id)
-        return info
+        return await youtube.get_video_info(video_id)
     except asyncio.TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -74,7 +77,7 @@ async def get_track_info(
         logger.warning(f"Track info failed for {video_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not get track info: {str(e)}",
+            detail="Could not get track info",
         )
 
 
@@ -83,8 +86,10 @@ async def get_related_tracks(
     video_id: str,
     limit: int = Query(default=20, ge=1, le=50),
     youtube: YouTubeService = Depends(get_youtube_service),
+    _user_id: str = Depends(get_current_user_id),
 ):
     """Get related videos for autoplay functionality."""
+    validate_video_id(video_id)
     try:
         related = await youtube.get_related_videos(video_id, limit)
         return {"results": [track.model_dump() for track in related]}
@@ -97,5 +102,5 @@ async def get_related_tracks(
         logger.warning(f"Related tracks failed for {video_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Could not get related tracks: {str(e)}",
+            detail="Could not get related tracks",
         )
