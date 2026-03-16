@@ -300,41 +300,50 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     );
 
     try {
+      debugPrint('[Player] Fetching stream for ${track.id} (video=$effectiveVideoMode)...');
+
       final streamResult = await (effectiveVideoMode
               ? _youtubeService.getVideoStreamUrl(track.id, quality: effectiveQuality)
               : _youtubeService.getAudioStreamUrl(track.id))
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 30));
 
       // Discard if user already started a newer playTrack call
       if (_playGeneration != thisGeneration) return;
 
+      debugPrint('[Player] Got stream URL: ${streamResult.url}');
+      debugPrint('[Player] Headers: ${streamResult.headers?.keys.toList()}');
+
       if (streamResult.url.isEmpty) {
+        debugPrint('[Player] Stream URL is empty!');
         state = state.copyWith(
           error: 'Could not get stream URL',
           isLoading: false,
         );
+        _handlePlaybackFailure();
         return;
       }
 
-      // Pass HTTP headers so YouTube streams work on Android
+      // Pass HTTP headers (includes auth token for proxy endpoints)
       final media = Media(
         streamResult.url,
         httpHeaders: streamResult.headers,
       );
 
-      debugPrint('[Player] Opening stream: ${streamResult.url.substring(0, 80)}...');
-      debugPrint('[Player] Headers present: ${streamResult.headers?.keys.toList()}');
-
+      debugPrint('[Player] Opening media in player...');
       await _player.open(media, play: true);
+      debugPrint('[Player] Player.open() completed');
     } on TimeoutException {
       if (_playGeneration != thisGeneration) return;
+      debugPrint('[Player] TIMEOUT fetching stream for ${track.id}');
       state = state.copyWith(
         error: 'Loading timed out — tap to retry',
         isLoading: false,
       );
       _handlePlaybackFailure();
-    } catch (e) {
+    } catch (e, stackTrace) {
       if (_playGeneration != thisGeneration) return;
+      debugPrint('[Player] ERROR for ${track.id}: $e');
+      debugPrint('[Player] Stack: $stackTrace');
       state = state.copyWith(
         error: 'Failed to load: ${e.toString()}',
         isLoading: false,

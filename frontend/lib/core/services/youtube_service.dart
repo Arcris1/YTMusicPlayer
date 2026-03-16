@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import '../api/api_client.dart';
 import '../../config/constants.dart';
 import '../../shared/models/track.dart';
@@ -90,12 +91,16 @@ class YouTubeService {
   /// The backend fetches from YouTube and pipes the bytes to the client,
   /// avoiding YouTube's IP-lock on direct stream URLs.
   Future<StreamResult> getAudioStreamUrl(String videoId) async {
-    // First fetch metadata (title, duration, thumbnail) from the info endpoint
+    debugPrint('[YouTubeService] getAudioStreamUrl($videoId) — fetching info...');
     final info = await getVideoInfo(videoId);
+    debugPrint('[YouTubeService] Got info: ${info.title}');
     final token = await _getAccessToken();
+    final url = _proxyStreamUrl('audio', videoId);
+    debugPrint('[YouTubeService] Proxy URL: $url');
+    debugPrint('[YouTubeService] Has token: ${token != null}');
 
     return StreamResult(
-      url: _proxyStreamUrl('audio', videoId),
+      url: url,
       title: info.title,
       duration: info.duration ?? 0,
       thumbnail: info.thumbnailUrl,
@@ -107,11 +112,16 @@ class YouTubeService {
 
   /// Get video stream — returns a proxy URL through our backend.
   Future<StreamResult> getVideoStreamUrl(String videoId, {String quality = 'best'}) async {
+    debugPrint('[YouTubeService] getVideoStreamUrl($videoId, quality=$quality) — fetching info...');
     final info = await getVideoInfo(videoId);
+    debugPrint('[YouTubeService] Got info: ${info.title}');
     final token = await _getAccessToken();
+    final url = _proxyStreamUrl('video', videoId, quality: quality);
+    debugPrint('[YouTubeService] Proxy URL: $url');
+    debugPrint('[YouTubeService] Has token: ${token != null}');
 
     return StreamResult(
-      url: _proxyStreamUrl('video', videoId, quality: quality),
+      url: url,
       title: info.title,
       duration: info.duration ?? 0,
       thumbnail: info.thumbnailUrl,
