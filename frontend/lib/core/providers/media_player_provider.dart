@@ -131,6 +131,14 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
   /// Incremented on every playTrack call so stale requests are discarded.
   int _playGeneration = 0;
 
+  /// Tracks consecutive playback errors to prevent infinite skip loops.
+  int _consecutiveErrors = 0;
+  static const int _maxConsecutiveErrors = 3;
+
+  /// Timestamp when the current track actually started playing.
+  /// Used to ignore spurious "completed" events that fire instantly on failure.
+  DateTime? _playbackStartTime;
+
   MediaPlayerController(this._player, this._youtubeService, this._audioHandler)
       : super(const MediaPlayerState()) {
     _setupListeners();
@@ -176,11 +184,22 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
     // Listen to completion
     _player.stream.completed.listen((completed) {
       if (completed) {
-        // Auto-play next track
+        // Ignore spurious "completed" events that fire within 2s of starting
+        // — this happens on Android when the stream URL fails to load.
+        final started = _playbackStartTime;
+        if (started != null &&
+            DateTime.now().difference(started).inSeconds < 2) {
+          debugPrint('[Player] Ignoring instant completion (stream likely failed)');
+          _handlePlaybackFailure();
+          return;
+        }
+
+        // Real completion — reset error counter and advance
+        _consecutiveErrors = 0;
+
         if (state.hasNext) {
           skipToNext();
         } else if (state.isAutoplayEnabled && state.currentTrack != null) {
-          // Queue ended - fetch related videos for continuous playback
           _fetchAndPlayRelated(state.currentTrack!.id);
         } else {
           state = state.copyWith(isPlaying: false);
@@ -288,31 +307,52 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
         return;
       }
 
-      await _player.open(
-        Media(streamResult.url),
-        play: true,
+      // Pass HTTP headers so YouTube streams work on Android
+      final media = Media(
+        streamResult.url,
+        httpHeaders: streamResult.headers,
       );
+
+      _playbackStartTime = DateTime.now();
+      _consecutiveErrors = 0;
+
+      await _player.open(media, play: true);
     } on TimeoutException {
       if (_playGeneration != thisGeneration) return;
       state = state.copyWith(
         error: 'Loading timed out — tap to retry',
         isLoading: false,
       );
-      _autoAdvanceOnError();
+      _handlePlaybackFailure();
     } catch (e) {
       if (_playGeneration != thisGeneration) return;
       state = state.copyWith(
         error: 'Failed to load: ${e.toString()}',
         isLoading: false,
       );
-      _autoAdvanceOnError();
+      _handlePlaybackFailure();
     }
   }
 
   /// Auto-advance to the next track after an error, with a short delay.
-  void _autoAdvanceOnError() {
+  /// Stops advancing after [_maxConsecutiveErrors] failures in a row.
+  void _handlePlaybackFailure() {
+    _consecutiveErrors++;
+    debugPrint('[Player] Consecutive errors: $_consecutiveErrors / $_maxConsecutiveErrors');
+
+    if (_consecutiveErrors >= _maxConsecutiveErrors) {
+      debugPrint('[Player] Too many consecutive errors — stopping auto-advance');
+      state = state.copyWith(
+        error: 'Playback failed. Tap a track to try again.',
+        isPlaying: false,
+        isLoading: false,
+      );
+      _consecutiveErrors = 0;
+      return;
+    }
+
     if (state.hasNext) {
-      Future.delayed(const Duration(seconds: 2), () {
+      Future.delayed(const Duration(seconds: 3), () {
         if (mounted) skipToNext();
       });
     }

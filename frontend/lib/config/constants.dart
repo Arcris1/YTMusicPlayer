@@ -4,7 +4,7 @@ class AppConstants {
   static const String likedSongsPlaylistId = 'liked_songs';
 
   // Backend API
-  static const String apiBaseUrl = 'http://localhost:8001';
+  static const String apiBaseUrl = 'http://72.61.143.6:8001';
   static const String apiPrefix = '/api/v1';
 
   // Search limits

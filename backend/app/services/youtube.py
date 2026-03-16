@@ -288,6 +288,7 @@ class YouTubeService:
             title=info.get('title', 'Unknown'),
             duration=info.get('duration', 0),
             thumbnail=info.get('thumbnail'),
+            headers=info.get('http_headers'),
         )
         _set_cached_stream(cache_key, stream_info)
         return stream_info
