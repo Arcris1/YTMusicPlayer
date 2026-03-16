@@ -135,9 +135,9 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
   int _consecutiveErrors = 0;
   static const int _maxConsecutiveErrors = 3;
 
-  /// Timestamp when the current track actually started playing.
-  /// Used to ignore spurious "completed" events that fire instantly on failure.
-  DateTime? _playbackStartTime;
+  /// Whether a failure was already handled for the current track attempt.
+  /// Prevents double-counting when both error + completed fire for the same failure.
+  bool _failureHandledForCurrent = false;
 
   MediaPlayerController(this._player, this._youtubeService, this._audioHandler)
       : super(const MediaPlayerState()) {
@@ -174,22 +174,30 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
       }
     });
 
-    // Listen to errors
+    // Listen to errors — treat as playback failure
     _player.stream.error.listen((error) {
       if (error.isNotEmpty) {
+        debugPrint('[Player] Stream error: $error');
         state = state.copyWith(error: error, isLoading: false);
+        _handlePlaybackFailure();
       }
     });
 
     // Listen to completion
     _player.stream.completed.listen((completed) {
       if (completed) {
-        // Ignore spurious "completed" events that fire within 2s of starting
-        // — this happens on Android when the stream URL fails to load.
-        final started = _playbackStartTime;
-        if (started != null &&
-            DateTime.now().difference(started).inSeconds < 2) {
-          debugPrint('[Player] Ignoring instant completion (stream likely failed)');
+        // Check if meaningful playback happened:
+        // If position is near zero or duration was never set, the stream
+        // failed to load — don't treat this as real completion.
+        final playedSomething = state.position.inSeconds > 3 &&
+            state.duration.inSeconds > 0;
+
+        if (!playedSomething) {
+          debugPrint(
+            '[Player] Completed with no real playback '
+            '(pos=${state.position.inSeconds}s, dur=${state.duration.inSeconds}s) '
+            '— treating as failure',
+          );
           _handlePlaybackFailure();
           return;
         }
@@ -273,6 +281,7 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
 
     // Cancel any in-flight request by bumping the generation
     final thisGeneration = ++_playGeneration;
+    _failureHandledForCurrent = false;
 
     state = state.copyWith(
       currentTrack: track,
@@ -313,8 +322,8 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
         httpHeaders: streamResult.headers,
       );
 
-      _playbackStartTime = DateTime.now();
-      _consecutiveErrors = 0;
+      debugPrint('[Player] Opening stream: ${streamResult.url.substring(0, 80)}...');
+      debugPrint('[Player] Headers present: ${streamResult.headers?.keys.toList()}');
 
       await _player.open(media, play: true);
     } on TimeoutException {
@@ -337,6 +346,10 @@ class MediaPlayerController extends StateNotifier<MediaPlayerState> {
   /// Auto-advance to the next track after an error, with a short delay.
   /// Stops advancing after [_maxConsecutiveErrors] failures in a row.
   void _handlePlaybackFailure() {
+    // Prevent double-counting (error + completed can both fire for one failure)
+    if (_failureHandledForCurrent) return;
+    _failureHandledForCurrent = true;
+
     _consecutiveErrors++;
     debugPrint('[Player] Consecutive errors: $_consecutiveErrors / $_maxConsecutiveErrors');
 
