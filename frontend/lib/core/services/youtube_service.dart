@@ -1,4 +1,5 @@
 import '../api/api_client.dart';
+import '../../config/constants.dart';
 import '../../shared/models/track.dart';
 import '../../shared/models/youtube_playlist.dart';
 
@@ -26,6 +27,22 @@ class YouTubeService {
   YouTubeService._internal();
 
   final _api = ApiClient();
+
+  /// Build a proxy stream URL that pipes audio/video through the backend.
+  /// This avoids YouTube's IP-lock on direct stream URLs.
+  String _proxyStreamUrl(String type, String videoId, {String? quality}) {
+    final base =
+        '${AppConstants.apiBaseUrl}${AppConstants.apiPrefix}/playback/stream/$type/$videoId';
+    if (quality != null && quality != 'best') {
+      return '$base?quality=$quality';
+    }
+    return base;
+  }
+
+  /// Get the current auth token for passing to MediaKit as an HTTP header.
+  Future<String?> _getAccessToken() async {
+    return await _api.storage.read(key: AppConstants.accessTokenKey);
+  }
 
   /// Search for videos (calls GET /search)
   Future<List<Track>> searchVideos(String query, {int limit = 30}) async {
@@ -69,37 +86,38 @@ class YouTubeService {
     };
   }
 
-  /// Get audio stream URL (calls GET /playback/audio/{id})
+  /// Get audio stream — returns a proxy URL through our backend.
+  /// The backend fetches from YouTube and pipes the bytes to the client,
+  /// avoiding YouTube's IP-lock on direct stream URLs.
   Future<StreamResult> getAudioStreamUrl(String videoId) async {
-    final response = await _api.dio.get('/playback/audio/$videoId');
-    final data = response.data as Map<String, dynamic>;
+    // First fetch metadata (title, duration, thumbnail) from the info endpoint
+    final info = await getVideoInfo(videoId);
+    final token = await _getAccessToken();
 
     return StreamResult(
-      url: data['url'] as String,
-      title: data['title'] as String,
-      duration: data['duration'] as int? ?? 0,
-      thumbnail: data['thumbnail'] as String?,
-      headers: data['headers'] != null
-          ? Map<String, String>.from(data['headers'] as Map)
-          : null,
+      url: _proxyStreamUrl('audio', videoId),
+      title: info.title,
+      duration: info.duration ?? 0,
+      thumbnail: info.thumbnailUrl,
+      headers: {
+        if (token != null) 'Authorization': 'Bearer $token',
+      },
     );
   }
 
-  /// Get video stream URL (calls GET /playback/video/{id})
+  /// Get video stream — returns a proxy URL through our backend.
   Future<StreamResult> getVideoStreamUrl(String videoId, {String quality = 'best'}) async {
-    final response = await _api.dio.get('/playback/video/$videoId', queryParameters: {
-      'quality': quality,
-    });
-    final data = response.data as Map<String, dynamic>;
+    final info = await getVideoInfo(videoId);
+    final token = await _getAccessToken();
 
     return StreamResult(
-      url: data['url'] as String,
-      title: data['title'] as String,
-      duration: data['duration'] as int? ?? 0,
-      thumbnail: data['thumbnail'] as String?,
-      headers: data['headers'] != null
-          ? Map<String, String>.from(data['headers'] as Map)
-          : null,
+      url: _proxyStreamUrl('video', videoId, quality: quality),
+      title: info.title,
+      duration: info.duration ?? 0,
+      thumbnail: info.thumbnailUrl,
+      headers: {
+        if (token != null) 'Authorization': 'Bearer $token',
+      },
     );
   }
 
