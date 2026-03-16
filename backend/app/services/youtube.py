@@ -1,3 +1,4 @@
+import os
 import yt_dlp
 from typing import Optional, List, Dict, Any
 from urllib.parse import quote_plus
@@ -46,6 +47,10 @@ def _set_cached_stream(key: str, info: StreamInfo) -> None:
 class YouTubeService:
     """Service for interacting with YouTube via yt-dlp."""
 
+    # Path to Netscape-format cookies.txt (exported from a logged-in browser).
+    # Set via YOUTUBE_COOKIES_FILE env var or place at /app/cookies.txt in Docker.
+    COOKIES_FILE = os.environ.get('YOUTUBE_COOKIES_FILE', '/app/cookies.txt')
+
     def __init__(self):
         self.base_opts = {
             'quiet': True,
@@ -56,6 +61,15 @@ class YouTubeService:
             'extractor_retries': 2,
             'geo_bypass': True,
         }
+        # Use cookies file if it exists (needed for VPS IPs flagged by YouTube)
+        if os.path.isfile(self.COOKIES_FILE):
+            self.base_opts['cookiefile'] = self.COOKIES_FILE
+            logger.info(f"Using YouTube cookies from {self.COOKIES_FILE}")
+        else:
+            logger.warning(
+                f"No cookies file at {self.COOKIES_FILE} — YouTube may block requests. "
+                "Export cookies.txt from a logged-in browser and place it there."
+            )
 
     def _extract_info(self, url: str, opts: dict) -> dict:
         """Extract video info (blocking operation)."""
