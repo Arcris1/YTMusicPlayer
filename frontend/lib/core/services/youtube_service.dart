@@ -88,16 +88,12 @@ class YouTubeService {
   }
 
   /// Get audio stream — returns a proxy URL through our backend.
-  /// The backend fetches from YouTube and pipes the bytes to the client,
-  /// avoiding YouTube's IP-lock on direct stream URLs.
   Future<StreamResult> getAudioStreamUrl(String videoId) async {
-    debugPrint('[YouTubeService] getAudioStreamUrl($videoId) — fetching info...');
+    debugPrint('[YouTubeService] getAudioStreamUrl($videoId)...');
     final info = await getVideoInfo(videoId);
-    debugPrint('[YouTubeService] Got info: ${info.title}');
     final token = await _getAccessToken();
     final url = _proxyStreamUrl('audio', videoId);
     debugPrint('[YouTubeService] Proxy URL: $url');
-    debugPrint('[YouTubeService] Has token: ${token != null}');
 
     return StreamResult(
       url: url,
@@ -112,13 +108,11 @@ class YouTubeService {
 
   /// Get video stream — returns a proxy URL through our backend.
   Future<StreamResult> getVideoStreamUrl(String videoId, {String quality = 'best'}) async {
-    debugPrint('[YouTubeService] getVideoStreamUrl($videoId, quality=$quality) — fetching info...');
+    debugPrint('[YouTubeService] getVideoStreamUrl($videoId, quality=$quality)...');
     final info = await getVideoInfo(videoId);
-    debugPrint('[YouTubeService] Got info: ${info.title}');
     final token = await _getAccessToken();
     final url = _proxyStreamUrl('video', videoId, quality: quality);
     debugPrint('[YouTubeService] Proxy URL: $url');
-    debugPrint('[YouTubeService] Has token: ${token != null}');
 
     return StreamResult(
       url: url,
