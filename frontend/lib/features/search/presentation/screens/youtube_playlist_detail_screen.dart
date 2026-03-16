@@ -118,6 +118,7 @@ class _YouTubePlaylistDetailScreenState
     final isPlayingHere = isFromThisPlaylist && playerState.isPlaying;
     final hasTrack = playerState.hasTrack;
     final hasSource = playerState.playlistSource != null;
+    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     final miniPlayerHeight = hasTrack ? (64.0 + (hasSource ? 28.0 : 0.0)) : 0.0;
 
     return Scaffold(
@@ -126,7 +127,7 @@ class _YouTubePlaylistDetailScreenState
         children: [
           // --- Main scrollable content ---
           Positioned.fill(
-            bottom: miniPlayerHeight,
+            bottom: miniPlayerHeight + bottomInset,
             child: CustomScrollView(
               slivers: [
                 // Header
@@ -325,12 +326,12 @@ class _YouTubePlaylistDetailScreenState
             ),
           ),
 
-          // --- Mini player at bottom ---
+          // --- Mini player at bottom (above system nav bar) ---
           if (hasTrack)
             Positioned(
               left: 0,
               right: 0,
-              bottom: 0,
+              bottom: bottomInset,
               child: MiniPlayer(onTap: _expandNowPlaying),
             ),
 

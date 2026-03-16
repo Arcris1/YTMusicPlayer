@@ -316,8 +316,16 @@ class YouTubeService:
 
         url = f"https://www.youtube.com/watch?v={video_id}"
 
+        # Use a progressive (combined audio+video) format to ensure sound.
+        # YouTube is deprecating progressive formats; fallback chains ensure we
+        # always get audio: mp4 progressive → any progressive → best single URL.
+        if quality == "best":
+            fmt = 'best[ext=mp4][acodec!=none]/best[acodec!=none]/best'
+        else:
+            fmt = f'best[height<={quality}][ext=mp4][acodec!=none]/best[height<={quality}][acodec!=none]/best[acodec!=none]/best'
+
         video_opts = {
-            'format': 'best[ext=mp4]/best' if quality == "best" else f'best[height<={quality}][ext=mp4]/best',
+            'format': fmt,
         }
 
         info = await self._run_extraction(url, video_opts, timeout=15.0)
